@@ -1,4 +1,3 @@
-use std::io::{Read as _, Write as _};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -6,7 +5,6 @@ use mdlive::AppConfig;
 use tauri::menu::{
     AboutMetadata, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
 };
-use tauri::Manager;
 
 #[cfg(target_os = "macos")]
 fn pick_file_or_folder(extensions: &[&str]) -> Option<PathBuf> {
@@ -46,7 +44,7 @@ fn pick_file_or_folder(_extensions: &[&str]) -> Option<PathBuf> {
 }
 
 static SERVER_PORT: OnceLock<u16> = OnceLock::new();
-static OWNS_SERVER: OnceLock<bool> = OnceLock::new();
+static RT_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
 fn check_mdlive_server(port: u16) -> bool {
     use std::io::{Read as _, Write as _};
@@ -78,15 +76,119 @@ fn find_existing_server() -> Option<u16> {
     None
 }
 
-async fn start_server() -> u16 {
+fn start_server_for_path(path: &std::path::Path) -> Result<u16, String> {
+    let rt = RT_HANDLE.get().ok_or("runtime not initialized")?;
+    // enter the runtime context so tokio::spawn works in new_router/start_watcher
+    let _guard = rt.enter();
+
+    let path = path.canonicalize().map_err(|e| e.to_string())?;
+
+    let (base_dir, tracked_files, is_dir_mode) = if path.is_file() {
+        let base = path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
+        (base, vec![path], false)
+    } else if path.is_dir() {
+        let files = mdlive::scan_supported_files(&path).map_err(|e| e.to_string())?;
+        if files.is_empty() {
+            return Err("no supported files in directory".into());
+        }
+        (path, files, true)
+    } else {
+        return Err("path is not a file or directory".into());
+    };
+
+    let router =
+        mdlive::new_router(base_dir, tracked_files, is_dir_mode).map_err(|e| e.to_string())?;
+
+    rt.block_on(async {
+        let (listener, port) = mdlive::bind_with_port_increment("127.0.0.1", mdlive::DEFAULT_PORT)
+            .await
+            .map_err(|e| e.to_string())?;
+        tokio::spawn(async move {
+            axum::serve(listener, router).await.expect("server crashed");
+        });
+        Ok(port)
+    })
+}
+
+fn create_window(app_handle: &tauri::AppHandle, port: u16, path: &std::path::Path) {
+    let url = format!("http://127.0.0.1:{port}");
+    let label = format!("win-{port}");
+    let title = format!(
+        "mdlive - {}",
+        path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string())
+    );
+    let _ = tauri::WebviewWindowBuilder::new(
+        app_handle,
+        &label,
+        tauri::WebviewUrl::External(url.parse().unwrap()),
+    )
+    .title(&title)
+    .inner_size(1500.0, 1000.0)
+    .min_inner_size(600.0, 400.0)
+    .build();
+}
+
+// start server on a background thread, then create window on main thread
+fn open_path_in_window(app_handle: &tauri::AppHandle, path: PathBuf) {
+    let handle = app_handle.clone();
+    std::thread::spawn(move || match start_server_for_path(&path) {
+        Ok(port) => {
+            let inner = handle.clone();
+            let _ = handle.run_on_main_thread(move || {
+                create_window(&inner, port, &path);
+            });
+        }
+        Err(e) => eprintln!("failed to open {}: {e}", path.display()),
+    });
+}
+
+#[derive(Clone)]
+struct WindowOpenTx(std::sync::mpsc::Sender<PathBuf>);
+
+async fn handle_window_new(
+    axum::Extension(tx): axum::Extension<WindowOpenTx>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> axum::Json<serde_json::Value> {
+    let path_str = body["path"].as_str().unwrap_or("");
+    if path_str.is_empty() {
+        return axum::Json(serde_json::json!({"success": false, "error": "path required"}));
+    }
+
+    let expanded = if let Some(rest) = path_str.strip_prefix("~/") {
+        dirs::home_dir()
+            .map(|h| h.join(rest))
+            .unwrap_or_else(|| PathBuf::from(path_str))
+    } else {
+        PathBuf::from(path_str)
+    };
+
+    if !expanded.exists() {
+        return axum::Json(serde_json::json!({"success": false, "error": "path not found"}));
+    }
+
+    match tx.0.send(expanded) {
+        Ok(_) => axum::Json(serde_json::json!({"success": true})),
+        Err(e) => axum::Json(serde_json::json!({"success": false, "error": e.to_string()})),
+    }
+}
+
+async fn start_server(window_tx: std::sync::mpsc::Sender<PathBuf>) -> u16 {
     // reuse existing daemon if running
     if let Some(port) = find_existing_server() {
         eprintln!("Reusing existing mdlive server on port {port}");
-        OWNS_SERVER.set(false).ok();
         return port;
     }
 
-    let router = mdlive::new_daemon_router_with_config(AppConfig::load());
+    let base_router = mdlive::new_daemon_router_with_config(AppConfig::load());
+    let router = base_router
+        .route("/api/window/new", axum::routing::post(handle_window_new))
+        .layer(axum::Extension(WindowOpenTx(window_tx)));
+
     let (listener, port) = mdlive::bind_with_port_increment("127.0.0.1", mdlive::DEFAULT_PORT)
         .await
         .expect("failed to bind server");
@@ -97,7 +199,6 @@ async fn start_server() -> u16 {
         axum::serve(listener, router).await.expect("server crashed");
     });
 
-    OWNS_SERVER.set(true).ok();
     port
 }
 
@@ -105,35 +206,6 @@ async fn start_server() -> u16 {
 fn get_server_url() -> String {
     let port = SERVER_PORT.get().copied().unwrap_or(mdlive::DEFAULT_PORT);
     format!("http://127.0.0.1:{port}")
-}
-
-// switch workspace via direct HTTP to our own server -- no webview dependency
-fn switch_workspace_http(path: &str) {
-    let port = SERVER_PORT.get().copied().unwrap_or(mdlive::DEFAULT_PORT);
-    let body = serde_json::json!({ "path": path }).to_string();
-    let request = format!(
-        "POST /api/workspace/switch HTTP/1.1\r\n\
-         Host: 127.0.0.1:{port}\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {}\r\n\
-         Connection: close\r\n\
-         \r\n\
-         {body}",
-        body.len()
-    );
-    if let Ok(mut stream) = std::net::TcpStream::connect(format!("127.0.0.1:{port}")) {
-        let _ = stream.write_all(request.as_bytes());
-        let _ = stream.flush();
-        let mut buf = [0u8; 512];
-        let _ = stream.read(&mut buf);
-    }
-}
-
-fn switch_workspace(window: &tauri::WebviewWindow, path: &str) {
-    switch_workspace_http(path);
-    // webview will auto-redirect via WebSocket WorkspaceChanged message,
-    // but also try eval as a fallback for the already-loaded case
-    let _ = window.eval("window.location.href='/'");
 }
 
 fn home_prefix() -> String {
@@ -263,7 +335,13 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    let port = rt.block_on(start_server());
+    RT_HANDLE
+        .set(rt.handle().clone())
+        .expect("runtime handle already set");
+
+    let (window_tx, window_rx) = std::sync::mpsc::channel::<PathBuf>();
+
+    let port = rt.block_on(start_server(window_tx));
     SERVER_PORT.set(port).expect("port already set");
 
     tauri::Builder::default()
@@ -291,14 +369,10 @@ pub fn run() {
                 if id == "open" {
                     let picked = pick_file_or_folder(&["md", "markdown", "txt", "json"]);
                     if let Some(path) = picked {
-                        if let Some(window) = app_handle.get_webview_window("main") {
-                            switch_workspace(&window, &path.display().to_string());
-                        }
+                        open_path_in_window(app_handle, path);
                     }
                 } else if let Some(path) = id.strip_prefix("recent:") {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        switch_workspace(&window, path);
-                    }
+                    open_path_in_window(app_handle, PathBuf::from(path));
                 } else if id == "clear_recent" {
                     let mut config = AppConfig::load();
                     config.recent.clear();
@@ -308,10 +382,22 @@ pub fn run() {
                 }
             });
 
-            // only install CLI if we own the server (not reusing daemon)
-            if OWNS_SERVER.get().copied().unwrap_or(true) {
-                install_cli();
-            }
+            // handle window open requests from CLI via /api/window/new
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                while let Ok(path) = window_rx.recv() {
+                    // start server on background thread (needs tokio runtime context)
+                    match start_server_for_path(&path) {
+                        Ok(port) => {
+                            let handle = app_handle.clone();
+                            let _ = app_handle.run_on_main_thread(move || {
+                                create_window(&handle, port, &path);
+                            });
+                        }
+                        Err(e) => eprintln!("failed to open {}: {e}", path.display()),
+                    }
+                }
+            });
 
             // keep tokio runtime alive for the lifetime of the app
             std::mem::forget(rt);
@@ -325,13 +411,7 @@ pub fn run() {
                 for url in urls {
                     if url.scheme() == "file" {
                         if let Ok(path) = url.to_file_path() {
-                            let path_str = path.display().to_string();
-                            // switch via HTTP first -- works regardless of webview state
-                            switch_workspace_http(&path_str);
-                            // then try to navigate the webview as well
-                            if let Some(window) = app_handle.get_webview_window("main") {
-                                let _ = window.eval("window.location.href='/'");
-                            }
+                            open_path_in_window(app_handle, path);
                         }
                     }
                 }
@@ -407,48 +487,4 @@ fn check_for_updates() {
             .set_level(rfd::MessageLevel::Info)
             .show();
     }
-}
-
-fn install_cli() {
-    let exe_dir = match std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-    {
-        Some(d) => d,
-        None => return,
-    };
-
-    let src = exe_dir.join("mdlive-cli");
-    if !src.exists() {
-        return;
-    }
-
-    let dest = ["/opt/homebrew/bin/mdlive", "/usr/local/bin/mdlive"]
-        .iter()
-        .find(|p| {
-            std::path::Path::new(p)
-                .parent()
-                .map(|d| d.exists())
-                .unwrap_or(false)
-        })
-        .unwrap_or(&"/usr/local/bin/mdlive");
-
-    // skip if symlink already points to the right place
-    let dest_path = std::path::Path::new(dest);
-    if let Ok(target) = std::fs::read_link(dest_path) {
-        if target == src {
-            return;
-        }
-    }
-
-    let cmd = format!("ln -sf '{}' '{}'", src.display(), dest);
-    let script = format!(
-        "do shell script \"{}\" with administrator privileges \
-         with prompt \"mdlive wants to install the CLI command to {}\"",
-        cmd, dest
-    );
-
-    let _ = std::process::Command::new("osascript")
-        .args(["-e", &script])
-        .status();
 }

@@ -26,6 +26,14 @@ struct Cli {
     #[arg(long)]
     no_open: bool,
 
+    /// Open in browser instead of the desktop app
+    #[arg(short, long)]
+    browser: bool,
+
+    /// Hand off to a running instance instead of starting a new one
+    #[arg(short, long)]
+    join: bool,
+
     /// Verbose logging for debugging handoff and server startup
     #[arg(short, long)]
     verbose: bool,
@@ -82,27 +90,51 @@ async fn main() -> Result<()> {
         Some(path) => {
             let absolute_path = path.canonicalize().unwrap_or(path);
 
-            if verbose {
-                eprintln!("[verbose] path: {}", absolute_path.display());
-                eprintln!("[verbose] trying handoff to port {}", cli.port);
-            }
+            if cli.join {
+                if verbose {
+                    eprintln!("[verbose] --join flag set, trying handoff");
+                    eprintln!("[verbose] trying handoff to port {}", cli.port);
+                }
 
-            // try handing off to a running server (daemon or Tauri app)
-            if try_handoff(&absolute_path, cli.port, verbose) {
-                return Ok(());
-            }
+                if try_handoff(&absolute_path, cli.port, verbose) {
+                    return Ok(());
+                }
 
-            if verbose {
-                eprintln!("[verbose] handoff failed, trying app launch");
-            }
+                if verbose {
+                    eprintln!("[verbose] handoff failed, trying app launch");
+                }
 
-            // try launching the Tauri app if installed
-            if try_launch_app(&absolute_path, cli.port, verbose) {
-                return Ok(());
-            }
+                if try_launch_app_handoff(&absolute_path, cli.port, verbose) {
+                    return Ok(());
+                }
 
-            if verbose {
-                eprintln!("[verbose] no app found, starting standalone server");
+                if verbose {
+                    eprintln!("[verbose] no running instance found, starting standalone");
+                }
+            } else if !cli.browser {
+                // default: try opening in desktop app
+                if verbose {
+                    eprintln!("[verbose] trying to open in app window");
+                }
+
+                if try_window_open(&absolute_path, cli.port, verbose) {
+                    eprintln!("Opened in mdlive: {}", absolute_path.display());
+                    return Ok(());
+                }
+
+                if verbose {
+                    eprintln!("[verbose] no running app, trying to launch");
+                }
+
+                if try_launch_app_window(&absolute_path, cli.port, verbose) {
+                    return Ok(());
+                }
+
+                if verbose {
+                    eprintln!("[verbose] no app found, falling back to browser");
+                }
+            } else if verbose {
+                eprintln!("[verbose] --browser flag, starting standalone server");
             }
 
             let (base_dir, tracked_files, is_directory_mode) = if absolute_path.is_file() {
@@ -139,6 +171,112 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+// -- window open (default): POST /api/window/new to running Tauri app --
+
+fn try_window_open(path: &std::path::Path, port: u16, verbose: bool) -> bool {
+    if verbose {
+        eprintln!("[verbose] try_window_open: port {port}");
+    }
+    if try_window_open_on_port(path, port, verbose) {
+        return true;
+    }
+
+    if let Some(daemon_port) = read_daemon_port() {
+        if verbose {
+            eprintln!("[verbose] portfile says {daemon_port}");
+        }
+        if daemon_port != port && try_window_open_on_port(path, daemon_port, verbose) {
+            return true;
+        }
+    } else if verbose {
+        eprintln!("[verbose] no portfile found");
+    }
+
+    false
+}
+
+fn try_window_open_on_port(path: &std::path::Path, port: u16, verbose: bool) -> bool {
+    use std::io::{Read as _, Write as _};
+
+    let path_str = path.display().to_string();
+    let body = serde_json::json!({ "path": path_str }).to_string();
+    let request = format!(
+        "POST /api/window/new HTTP/1.1\r\n\
+         Host: 127.0.0.1:{port}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {body}",
+        body.len()
+    );
+
+    let addr = format!("127.0.0.1:{port}");
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(
+        &addr.parse().unwrap(),
+        std::time::Duration::from_millis(500),
+    ) else {
+        if verbose {
+            eprintln!("[verbose] connect to {addr} failed");
+        }
+        return false;
+    };
+
+    if verbose {
+        eprintln!("[verbose] connected to {addr}, sending window/new request");
+    }
+
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let _ = stream.flush();
+
+    let mut buf = vec![0u8; 1024];
+    let _ = stream.read(&mut buf);
+    let response = String::from_utf8_lossy(&buf);
+
+    if verbose {
+        let first_line = response.lines().next().unwrap_or("");
+        eprintln!("[verbose] window/new response: {first_line}");
+    }
+
+    response.contains("\"success\":true")
+}
+
+fn try_launch_app_window(path: &std::path::Path, port: u16, verbose: bool) -> bool {
+    if !app_exists() {
+        if verbose {
+            eprintln!("[verbose] no mdlive.app found");
+        }
+        return false;
+    }
+
+    eprintln!("Launching mdlive app...");
+    if std::process::Command::new("open")
+        .args(["-a", "mdlive"])
+        .status()
+        .is_err()
+    {
+        return false;
+    }
+
+    for i in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if verbose && i % 10 == 0 && i > 0 {
+            eprintln!("[verbose] polling... {i}/50");
+        }
+        if try_window_open(path, port, verbose) {
+            eprintln!("Opened in mdlive: {}", path.display());
+            return true;
+        }
+    }
+
+    eprintln!("App launched but could not open window");
+    false
+}
+
+// -- join mode: hand off to running instance via /api/workspace/switch --
 
 fn try_handoff(path: &std::path::Path, port: u16, verbose: bool) -> bool {
     if verbose {
@@ -226,12 +364,8 @@ fn try_handoff_on_port(path: &std::path::Path, port: u16, verbose: bool) -> bool
     true
 }
 
-fn try_launch_app(path: &std::path::Path, port: u16, verbose: bool) -> bool {
-    let app_exists = std::path::Path::new("/Applications/mdlive.app").exists()
-        || dirs::home_dir()
-            .map(|h| h.join("Applications/mdlive.app").exists())
-            .unwrap_or(false);
-    if !app_exists {
+fn try_launch_app_handoff(path: &std::path::Path, port: u16, verbose: bool) -> bool {
+    if !app_exists() {
         if verbose {
             eprintln!("[verbose] no mdlive.app found");
         }
@@ -259,6 +393,15 @@ fn try_launch_app(path: &std::path::Path, port: u16, verbose: bool) -> bool {
 
     eprintln!("App launched but server did not respond in time");
     false
+}
+
+// -- shared helpers --
+
+fn app_exists() -> bool {
+    std::path::Path::new("/Applications/mdlive.app").exists()
+        || dirs::home_dir()
+            .map(|h| h.join("Applications/mdlive.app").exists())
+            .unwrap_or(false)
 }
 
 fn handle_service(action: ServiceAction, hostname: &str, port: u16) -> Result<()> {

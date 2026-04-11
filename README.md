@@ -99,7 +99,7 @@ Pass a directory and mdlive recursively finds all `.md`, `.markdown`, `.txt`, an
 
 ### Daemon mode
 
-Run `mdlive` with no arguments and it starts in daemon mode -- a single long-running process you keep around. Instead of spawning a new process per directory, you switch between projects from the UI.
+Run `mdlive` with no arguments and it starts in daemon mode -- a single long-running process you keep around. You switch between projects from the UI instead of spawning new processes. Each `mdlive file.md` or `mdlive dir/` call spawns its own instance on a free port by default. Pass `-j` (`--join`) to hand off to a running instance instead.
 
 On first launch you get a workspace picker: type a path (directories and individual files both work, `~` expansion included), use the Browse button to navigate your filesystem, or click a recent entry. Once a workspace is loaded, everything works the same as direct mode -- sidebar, tabs, editing, revisions. Hit `o` or click the folder icon in the bottom-right to switch to a different workspace without restarting.
 
@@ -150,9 +150,10 @@ Press `/` to see all available shortcuts. Shortcuts are suppressed when typing i
 
 ```bash
 mdlive                        # daemon mode with workspace picker
-mdlive file.md                # serve a single file (port 4891)
+mdlive file.md                # serve a single file (new instance, auto-picks port)
 mdlive docs/                  # directory mode with sidebar
 mdlive docs/ -p 8080          # custom port
+mdlive file.md -j             # hand off to a running instance instead of spawning new
 mdlive file.md --no-open      # don't auto-open the browser
 mdlive file.md -H 0.0.0.0    # bind to all interfaces
 mdlive service install        # auto-start on login (macOS)
