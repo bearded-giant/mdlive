@@ -20,6 +20,10 @@ pub(crate) type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 pub enum ServerMessage {
     Reload,
     Pong,
+    FileMoved {
+        from: String,
+        to: String,
+    },
     WorkspaceChanged {
         base_dir: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -279,6 +283,46 @@ impl MarkdownState {
 
     pub(crate) fn remove_tracked_file(&mut self, key: &str) -> bool {
         self.tracked_files.remove(key).is_some()
+    }
+
+    /// Rewrite every tracked key that equals `from` or lives under `from/` to
+    /// point at the equivalent location under `to`. Used when a directory is
+    /// moved so every file inside stays tracked without rescanning.
+    pub(crate) fn move_tracked_prefix(&mut self, from: &str, to: &str) {
+        let from_prefix = format!("{from}/");
+        let to_prefix = format!("{to}/");
+        let keys: Vec<String> = self.tracked_files.keys().cloned().collect();
+        for key in keys {
+            let new_key = if key == from {
+                to.to_string()
+            } else if key.starts_with(&from_prefix) {
+                format!("{to_prefix}{}", &key[from_prefix.len()..])
+            } else {
+                continue;
+            };
+            if let Some(mut tf) = self.tracked_files.remove(&key) {
+                let new_path = self.base_dir.join(&new_key);
+                tf.path = new_path.canonicalize().unwrap_or(new_path);
+                self.tracked_files.insert(new_key, tf);
+            }
+        }
+    }
+
+    /// Drop every tracked entry that equals `prefix` or lives under `prefix/`.
+    /// Used when a directory is deleted.
+    pub(crate) fn remove_tracked_prefix(&mut self, prefix: &str) -> usize {
+        let prefix_slash = format!("{prefix}/");
+        let keys: Vec<String> = self
+            .tracked_files
+            .keys()
+            .filter(|k| k.as_str() == prefix || k.starts_with(&prefix_slash))
+            .cloned()
+            .collect();
+        let count = keys.len();
+        for key in keys {
+            self.tracked_files.remove(&key);
+        }
+        count
     }
 
     pub(crate) fn render_file_to_html(path: &Path, content: &str) -> Result<String> {

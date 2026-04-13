@@ -44,7 +44,7 @@ pub(crate) async fn serve_html_root(State(state): State<SharedMarkdownState>) ->
 
     let _ = state.refresh_file(&filename);
 
-    render_file(&state, &filename).await
+    render_file_with_default_flag(&state, &filename, true).await
 }
 
 pub(crate) async fn serve_file(
@@ -60,7 +60,7 @@ pub(crate) async fn serve_file(
 
         let _ = state.refresh_file(&filepath);
 
-        let (status, html) = render_file(&state, &filepath).await;
+        let (status, html) = render_file_with_default_flag(&state, &filepath, false).await;
         (status, html).into_response()
     } else if is_image_file(&filepath) {
         serve_static_file_inner(filepath, state).await
@@ -115,9 +115,10 @@ fn render_workspace_picker(state: &MarkdownState) -> (StatusCode, Html<String>) 
     }
 }
 
-pub(crate) async fn render_file(
+async fn render_file_with_default_flag(
     state: &MarkdownState,
     current_file: &str,
+    is_default_file: bool,
 ) -> (StatusCode, Html<String>) {
     let env = template_env();
     let template = match env.get_template(TEMPLATE_NAME) {
@@ -163,6 +164,7 @@ pub(crate) async fn render_file(
             current_file => current_file,
             base_dir => state.base_dir.display().to_string(),
             daemon_mode => state.daemon_mode,
+            is_default_file => is_default_file,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -183,6 +185,7 @@ pub(crate) async fn render_file(
             current_file => current_file,
             base_dir => state.base_dir.display().to_string(),
             daemon_mode => state.daemon_mode,
+            is_default_file => is_default_file,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -333,10 +336,16 @@ fn render_not_found(state: &MarkdownState, path: &str) -> (StatusCode, Html<Stri
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;");
+    let hint = if state.show_navigation() {
+        "Pick a file from the sidebar, or \
+         <a href=\"/\">open the workspace default</a>."
+    } else {
+        "<a href=\"/\">Reload the workspace</a>."
+    };
     let content = Value::from_safe_string(format!(
-        "<div class=\"not-found-page\"><h2>Page not found</h2>\
-         <p><code>{escaped}</code> doesn't exist or isn't tracked.</p>\
-         <a href=\"/\">Back to home</a></div>"
+        "<div class=\"not-found-page\"><h2>File unavailable</h2>\
+         <p><code>{escaped}</code> was moved, renamed, or deleted.</p>\
+         <p>{hint}</p></div>"
     ));
 
     let rendered = if state.show_navigation() {
@@ -350,6 +359,7 @@ fn render_not_found(state: &MarkdownState, path: &str) -> (StatusCode, Html<Stri
             current_file => "",
             base_dir => state.base_dir.display().to_string(),
             daemon_mode => state.daemon_mode,
+            unavailable_path => path,
         })
     } else {
         template.render(context! {
@@ -359,6 +369,7 @@ fn render_not_found(state: &MarkdownState, path: &str) -> (StatusCode, Html<Stri
             current_file => "",
             base_dir => state.base_dir.display().to_string(),
             daemon_mode => state.daemon_mode,
+            unavailable_path => path,
         })
     };
 

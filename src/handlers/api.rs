@@ -162,6 +162,33 @@ fn validate_new_path(
     Ok(full)
 }
 
+fn validate_new_directory_path(
+    base_dir: &Path,
+    relative: &str,
+) -> Result<PathBuf, (StatusCode, Json<ApiResponse>)> {
+    if relative.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                error: Some("target path required".to_string()),
+                path: None,
+            }),
+        ));
+    }
+    if relative.contains("..") {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse {
+                success: false,
+                error: Some("path traversal not allowed".to_string()),
+                path: None,
+            }),
+        ));
+    }
+    Ok(base_dir.join(relative))
+}
+
 pub(crate) async fn api_raw_content(
     Query(params): Query<RawContentQuery>,
     State(state): State<SharedMarkdownState>,
@@ -244,9 +271,15 @@ pub(crate) async fn api_move_file(
 ) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
     let mut state = state.lock().await;
     let source_canonical = validate_existing_path(&state.base_dir, &body.path)?;
-    let target_full = validate_new_path(&state.base_dir, &body.target)?;
+    let is_dir = source_canonical.is_dir();
 
-    if !state.tracked_files.contains_key(&body.path) {
+    let target_full = if is_dir {
+        validate_new_directory_path(&state.base_dir, &body.target)?
+    } else {
+        validate_new_path(&state.base_dir, &body.target)?
+    };
+
+    if !is_dir && !state.tracked_files.contains_key(&body.path) {
         return Err((
             StatusCode::NOT_FOUND,
             Json(ApiResponse {
@@ -292,15 +325,73 @@ pub(crate) async fn api_move_file(
         )
     })?;
 
-    state.remove_tracked_file(&body.path);
-    let canonical_target = target_full.canonicalize().unwrap_or(target_full);
-    let _ = state.add_tracked_file(canonical_target);
-    let _ = state.change_tx.send(ServerMessage::Reload);
+    if is_dir {
+        state.move_tracked_prefix(&body.path, &body.target);
+    } else {
+        state.remove_tracked_file(&body.path);
+        let canonical_target = target_full.canonicalize().unwrap_or(target_full);
+        let _ = state.add_tracked_file(canonical_target);
+    }
+
+    let _ = state.change_tx.send(ServerMessage::FileMoved {
+        from: body.path.clone(),
+        to: body.target.clone(),
+    });
 
     Ok(Json(ApiResponse {
         success: true,
         error: None,
         path: Some(body.target),
+    }))
+}
+
+pub(crate) async fn api_delete_directory(
+    State(state): State<SharedMarkdownState>,
+    Json(body): Json<DeleteFileRequest>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    let mut state = state.lock().await;
+    let canonical = validate_existing_path(&state.base_dir, &body.path)?;
+
+    if !canonical.is_dir() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse {
+                success: false,
+                error: Some("not a directory".to_string()),
+                path: None,
+            }),
+        ));
+    }
+
+    if canonical == state.base_dir {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ApiResponse {
+                success: false,
+                error: Some("cannot delete workspace root".to_string()),
+                path: None,
+            }),
+        ));
+    }
+
+    fs::remove_dir_all(&canonical).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse {
+                success: false,
+                error: Some(format!("failed to delete: {e}")),
+                path: None,
+            }),
+        )
+    })?;
+
+    state.remove_tracked_prefix(&body.path);
+    let _ = state.change_tx.send(ServerMessage::Reload);
+
+    Ok(Json(ApiResponse {
+        success: true,
+        error: None,
+        path: None,
     }))
 }
 

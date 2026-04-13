@@ -75,6 +75,10 @@ fn build_routes(state: Arc<Mutex<MarkdownState>>) -> Router {
             "/api/create_directory",
             post(handlers::api::api_create_directory),
         )
+        .route(
+            "/api/delete_directory",
+            post(handlers::api::api_delete_directory),
+        )
         .route("/api/save_file", post(handlers::api::api_save_file))
         .route("/api/file_history", get(handlers::api::api_file_history))
         .route(

@@ -2080,6 +2080,36 @@
           display: block;
       }
 
+      /* transient toast notifications */
+      .toast-container {
+          position: fixed;
+          bottom: 24px;
+          right: 24px;
+          z-index: 1000;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          pointer-events: none;
+      }
+      .toast {
+          background: var(--bg-elevated, #2a2a2a);
+          color: var(--text-color, #fff);
+          border: 1px solid var(--border-color);
+          border-left: 3px solid var(--link-color);
+          padding: 10px 14px;
+          border-radius: 4px;
+          font-size: 13px;
+          max-width: 360px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+          opacity: 0;
+          transform: translateX(12px);
+          transition: opacity 180ms ease, transform 180ms ease;
+      }
+      .toast.show {
+          opacity: 1;
+          transform: translateX(0);
+      }
+
       /* revisions panel */
       .history-panel {
           display: none;
@@ -2906,6 +2936,19 @@
           };
           menu.appendChild(newBtn);
           menu.appendChild(newDirBtn);
+          // rename / delete don't apply to the workspace root (path === "")
+          if (path) {
+            var moveDirBtn = createMenuItem("Move / rename", false);
+            moveDirBtn.onclick = function () {
+              moveFile(path);
+            };
+            var deleteDirBtn = createMenuItem("Delete directory", true);
+            deleteDirBtn.onclick = function () {
+              deleteDirectory(path);
+            };
+            menu.appendChild(moveDirBtn);
+            menu.appendChild(deleteDirBtn);
+          }
         }
 
         menu.classList.add("show");
@@ -3015,6 +3058,43 @@
                 showFileDialogError(err.message);
               });
           },
+        );
+      }
+
+      function deleteDirectory(path) {
+        hideContextMenu();
+        showConfirm(
+          'Delete directory "' + path + '" and everything inside it?',
+          function () {
+            fetch("/api/delete_directory", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ path: path }),
+            })
+              .then(function (r) {
+                return r.json();
+              })
+              .then(function (data) {
+                if (!data.success) {
+                  alert("Delete failed: " + (data.error || "unknown error"));
+                  return;
+                }
+                // close tabs for anything under the deleted directory
+                var prefix = path + "/";
+                var tabs = TabManager.tabs().slice();
+                for (var i = 0; i < tabs.length; i++) {
+                  var p = tabs[i].path;
+                  if (p === path || p.indexOf(prefix) === 0) {
+                    TabManager.clearDraft(p);
+                  }
+                }
+                // websocket Reload will refresh the tree
+              })
+              .catch(function (err) {
+                alert("Delete failed: " + err.message);
+              });
+          },
+          { destructive: true },
         );
       }
 
@@ -3132,6 +3212,16 @@
             if (message.type === "Reload") {
               console.log("Reloading page via WebSocket");
               window.location.reload();
+            } else if (message.type === "FileMoved") {
+              if (typeof TabManager !== 'undefined') {
+                TabManager.updatePath(message.from, message.to);
+              }
+              var movedPrefix = message.from + '/';
+              if (currentFile === message.from) {
+                window.location.href = "/" + message.to;
+              } else if (currentFile && currentFile.indexOf(movedPrefix) === 0) {
+                window.location.href = "/" + message.to + '/' + currentFile.substring(movedPrefix.length);
+              }
             } else if (message.type === "WorkspaceChanged") {
               console.log("Workspace changed to: " + message.base_dir);
               // skip navigation if we're already showing this workspace
@@ -3356,11 +3446,83 @@
       var isEditorMode = {{ editor_mode|default(false)|tojson }};
       var showNavigation = {{ show_navigation|default(false)|tojson }};
       var baseDir = {{ base_dir|default('')|tojson }};
+      var isDefaultFile = {{ is_default_file|default(false)|tojson }};
+      var unavailablePath = {{ unavailable_path|default('')|tojson }};
+    </script>
+    <script>
+    // 404 recovery: if the URL matches a saved tab, close it and jump to the
+    // next one -- like Sublime / VS Code when a file vanishes. Toast is shown
+    // on the destination page via sessionStorage handoff.
+    (function() {
+        if (!unavailablePath) return;
+        try {
+            var tabsKey = 'mdlive-tabs:' + baseDir;
+            var activeKey = 'mdlive-active-tab:' + baseDir;
+            var stored = localStorage.getItem(tabsKey);
+            var tabs = stored ? JSON.parse(stored) : [];
+            if (!Array.isArray(tabs)) return;
+
+            var idx = -1;
+            for (var i = 0; i < tabs.length; i++) {
+                if (tabs[i].path === unavailablePath) { idx = i; break; }
+            }
+            if (idx === -1) return;  // direct URL, not a tracked tab -- leave the page as-is
+
+            tabs.splice(idx, 1);
+            localStorage.setItem(tabsKey, JSON.stringify(tabs));
+            try { sessionStorage.removeItem('tab-draft:' + baseDir + ':' + unavailablePath); } catch(e) {}
+            if (localStorage.getItem(activeKey) === unavailablePath) {
+                localStorage.removeItem(activeKey);
+            }
+
+            try {
+                sessionStorage.setItem('mdlive-pending-toast',
+                    'Closed tab — "' + unavailablePath + '" was moved, renamed, or deleted.');
+            } catch(e) {}
+
+            var target = tabs.length > 0 ? tabs[Math.min(idx, tabs.length - 1)] : null;
+            var url = target
+                ? (target.mode === 'edit' ? '/edit/' + target.path : '/' + target.path)
+                : '/';
+            window.location.replace(url);
+        } catch(e) { /* fall back to the rendered not-found body */ }
+    })();
+    </script>
+    <script>
+    // Run before TabManager boots: when re-opening a workspace we land on the
+    // alphabetically first file, which isn't what the user was looking at.
+    // If they had tabs saved, jump straight to the last active one so the
+    // default file never gets added to the tab list.
+    (function() {
+        if (!showNavigation || !isDefaultFile || !currentFile) return;
+        try {
+            var stored = localStorage.getItem('mdlive-tabs:' + baseDir);
+            var savedTabs = stored ? JSON.parse(stored) : [];
+            if (!Array.isArray(savedTabs) || savedTabs.length === 0) return;
+
+            var activePath = localStorage.getItem('mdlive-active-tab:' + baseDir);
+            var target = null;
+            if (activePath) {
+                for (var i = 0; i < savedTabs.length; i++) {
+                    if (savedTabs[i].path === activePath) {
+                        target = savedTabs[i];
+                        break;
+                    }
+                }
+            }
+            if (!target) target = savedTabs[savedTabs.length - 1];
+            if (!target || !target.path || target.path === currentFile) return;
+
+            var url = target.mode === 'edit' ? '/edit/' + target.path : '/' + target.path;
+            window.location.replace(url);
+        } catch(e) { /* fall through and render the default file */ }
+    })();
     </script>
     <script>
     var TabManager = (function() {
-        var MAX_TABS = 10;
+        var MAX_TABS = 20;
         var STORAGE_KEY = 'mdlive-tabs:' + baseDir;
+        var ACTIVE_KEY = 'mdlive-active-tab:' + baseDir;
         var DRAFT_PREFIX = 'tab-draft:' + baseDir + ':';
         var tabs = [];
         var currentPath = currentFile;
@@ -3495,6 +3657,7 @@
             if (path === currentPath) {
                 if (tabs.length === 0) {
                     currentPath = '';
+                    try { localStorage.removeItem(ACTIVE_KEY); } catch(e) {}
                     var container = document.querySelector('.editor-container') || document.querySelector('.page-container');
                     if (container) container.style.display = 'none';
                     document.querySelectorAll('.status-bar-mode').forEach(function(el) { el.style.display = 'none'; });
@@ -3537,15 +3700,30 @@
         }
 
         function updatePath(oldPath, newPath) {
-            var idx = findTab(oldPath);
-            if (idx !== -1) {
-                tabs[idx].path = newPath;
-                // transfer draft
-                var draft = getDraft(oldPath);
-                if (draft !== null) {
-                    clearDraft(oldPath);
-                    cacheDraft(newPath, draft);
+            // handles both file renames (exact match) and directory renames
+            // (every tab under the renamed dir is rewritten)
+            var prefix = oldPath + '/';
+            var newPrefix = newPath + '/';
+            var changed = false;
+            for (var i = 0; i < tabs.length; i++) {
+                var p = tabs[i].path;
+                var np = null;
+                if (p === oldPath) {
+                    np = newPath;
+                } else if (p.indexOf(prefix) === 0) {
+                    np = newPrefix + p.substring(prefix.length);
                 }
+                if (np !== null) {
+                    var draft = getDraft(p);
+                    if (draft !== null) {
+                        clearDraft(p);
+                        cacheDraft(np, draft);
+                    }
+                    tabs[i].path = np;
+                    changed = true;
+                }
+            }
+            if (changed) {
                 save();
                 render();
             }
@@ -3580,6 +3758,8 @@
                     tabs[idx].mode = mode;
                 }
                 save();
+                // remember which tab was active so a future re-open lands here
+                try { localStorage.setItem(ACTIVE_KEY, currentPath); } catch(e) {}
             }
 
             document.body.classList.add('has-tabs');
@@ -3606,8 +3786,37 @@
 
     document.addEventListener('DOMContentLoaded', function() {
         TabManager.init();
+        showPendingToast();
     });
+
+    function showToast(message) {
+        var container = document.getElementById('toastContainer');
+        if (!container) return;
+        var item = document.createElement('div');
+        item.className = 'toast';
+        item.textContent = message;
+        container.appendChild(item);
+        // force layout so the transition runs
+        void item.offsetWidth;
+        item.classList.add('show');
+        setTimeout(function() {
+            item.classList.remove('show');
+            setTimeout(function() {
+                if (item.parentNode) item.parentNode.removeChild(item);
+            }, 220);
+        }, 4000);
+    }
+
+    function showPendingToast() {
+        try {
+            var msg = sessionStorage.getItem('mdlive-pending-toast');
+            if (!msg) return;
+            sessionStorage.removeItem('mdlive-pending-toast');
+            showToast(msg);
+        } catch(e) {}
+    }
     </script>
+    <div id="toastContainer" class="toast-container"></div>
     <div id="contextMenu" class="context-menu"></div>
     <div id="fileDialog" class="file-dialog-overlay">
       <div class="file-dialog">
@@ -4273,6 +4482,16 @@
                           setTimeout(function() {
                               notify.classList.remove('show');
                           }, 3000);
+                      } else if (message.type === 'FileMoved') {
+                          if (typeof TabManager !== 'undefined') {
+                              TabManager.updatePath(message.from, message.to);
+                          }
+                          var movedPrefix = message.from + '/';
+                          if (currentFile === message.from) {
+                              window.location.href = '/edit/' + message.to;
+                          } else if (currentFile && currentFile.indexOf(movedPrefix) === 0) {
+                              window.location.href = '/edit/' + message.to + '/' + currentFile.substring(movedPrefix.length);
+                          }
                       }
                   } catch(e) {}
               };
