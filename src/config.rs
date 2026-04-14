@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub file_path: PathBuf,
     #[serde(default)]
     pub recent: Vec<RecentWorkspace>,
+    #[serde(default)]
+    pub last_workspaces: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -25,6 +27,7 @@ impl Default for AppConfig {
         Self {
             file_path: default_config_path(),
             recent: Vec::new(),
+            last_workspaces: Vec::new(),
         }
     }
 }

@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use mdlive::AppConfig;
@@ -44,6 +46,78 @@ fn pick_file_or_folder(_extensions: &[&str]) -> Option<PathBuf> {
 
 static SERVER_PORT: OnceLock<u16> = OnceLock::new();
 static RT_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+
+// tracks which workspace path each window is serving (label → canonical path)
+static WINDOW_PATHS: OnceLock<std::sync::Mutex<HashMap<String, String>>> = OnceLock::new();
+static APP_QUITTING: AtomicBool = AtomicBool::new(false);
+
+fn register_window_path(label: &str, path: &std::path::Path) {
+    if let Some(m) = WINDOW_PATHS.get() {
+        if let Ok(mut map) = m.lock() {
+            map.insert(
+                label.to_string(),
+                path.canonicalize()
+                    .unwrap_or_else(|_| path.to_path_buf())
+                    .display()
+                    .to_string(),
+            );
+        }
+    }
+    persist_workspaces();
+}
+
+fn unregister_window_path(label: &str) {
+    if let Some(m) = WINDOW_PATHS.get() {
+        if let Ok(mut map) = m.lock() {
+            map.remove(label);
+        }
+    }
+    persist_workspaces();
+}
+
+fn persist_workspaces() {
+    let mut workspaces: Vec<String> = Vec::new();
+
+    if let Some(m) = WINDOW_PATHS.get() {
+        if let Ok(map) = m.lock() {
+            workspaces = map.values().cloned().collect();
+        }
+    }
+
+    // the daemon's "main" window can switch workspaces via the web UI without
+    // creating a new window, so it's never in WINDOW_PATHS — query it directly
+    if let Some(&port) = SERVER_PORT.get() {
+        if let Some(ws) = query_daemon_workspace(port) {
+            if !ws.is_empty() && !workspaces.contains(&ws) {
+                workspaces.push(ws);
+            }
+        }
+    }
+
+    let mut config = AppConfig::load();
+    config.last_workspaces = workspaces;
+    let _ = config.save();
+}
+
+fn query_daemon_workspace(port: u16) -> Option<String> {
+    use std::io::{Read as _, Write as _};
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().ok()?;
+    let mut stream =
+        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200)).ok()?;
+    let req = format!(
+        "GET /api/workspace/current HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).ok()?;
+    stream.flush().ok()?;
+    let mut buf = vec![0u8; 4096];
+    let n = stream.read(&mut buf).ok()?;
+    let resp = String::from_utf8_lossy(&buf[..n]);
+    let body = resp.split("\r\n\r\n").nth(1)?;
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    json.get("base_dir")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
 
 fn check_mdlive_server(port: u16) -> bool {
     use std::io::{Read as _, Write as _};
@@ -121,7 +195,7 @@ fn create_window(app_handle: &tauri::AppHandle, port: u16, path: &std::path::Pat
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.display().to_string())
     );
-    let _ = tauri::WebviewWindowBuilder::new(
+    if tauri::WebviewWindowBuilder::new(
         app_handle,
         &label,
         tauri::WebviewUrl::External(url.parse().unwrap()),
@@ -129,7 +203,11 @@ fn create_window(app_handle: &tauri::AppHandle, port: u16, path: &std::path::Pat
     .title(&title)
     .inner_size(1500.0, 1000.0)
     .min_inner_size(600.0, 400.0)
-    .build();
+    .build()
+    .is_ok()
+    {
+        register_window_path(&label, path);
+    }
 }
 
 // start server on a background thread, then create window on main thread
@@ -176,6 +254,11 @@ async fn handle_window_new(
     }
 }
 
+async fn handle_persist_session() -> axum::Json<serde_json::Value> {
+    persist_workspaces();
+    axum::Json(serde_json::json!({"success": true}))
+}
+
 async fn start_server(window_tx: std::sync::mpsc::Sender<PathBuf>) -> u16 {
     // reuse existing daemon if running
     if let Some(port) = find_existing_server() {
@@ -186,6 +269,10 @@ async fn start_server(window_tx: std::sync::mpsc::Sender<PathBuf>) -> u16 {
     let base_router = mdlive::new_daemon_router_with_config(AppConfig::load());
     let router = base_router
         .route("/api/window/new", axum::routing::post(handle_window_new))
+        .route(
+            "/api/session/persist",
+            axum::routing::post(handle_persist_session),
+        )
         .layer(axum::Extension(WindowOpenTx(window_tx)));
 
     let (listener, port) = mdlive::bind_with_port_increment("127.0.0.1", mdlive::DEFAULT_PORT)
@@ -347,27 +434,62 @@ pub fn run() {
         .set(rt.handle().clone())
         .expect("runtime handle already set");
 
+    WINDOW_PATHS
+        .set(std::sync::Mutex::new(HashMap::new()))
+        .expect("window paths already set");
+
     let (window_tx, window_rx) = std::sync::mpsc::channel::<PathBuf>();
 
     let port = rt.block_on(start_server(window_tx));
     SERVER_PORT.set(port).expect("port already set");
 
+    // check for workspaces to restore from last session
+    let config = AppConfig::load();
+    let mut restore_paths: Vec<PathBuf> = config
+        .last_workspaces
+        .iter()
+        .filter_map(|p| {
+            let pb = PathBuf::from(p);
+            if pb.exists() {
+                Some(pb)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // fallback: reopen the most recently used workspace
+    if restore_paths.is_empty() {
+        if let Some(recent) = config.recent.first() {
+            let pb = PathBuf::from(&recent.path);
+            if pb.exists() {
+                restore_paths.push(pb);
+            }
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .invoke_handler(tauri::generate_handler![get_server_url])
         .setup(move |app| {
-            let url = format!("http://127.0.0.1:{port}");
-            let window = tauri::WebviewWindowBuilder::new(
-                app,
-                "main",
-                tauri::WebviewUrl::External(url.parse().unwrap()),
-            )
-            .title("mdlive")
-            .inner_size(1500.0, 1000.0)
-            .min_inner_size(600.0, 400.0)
-            .build()?;
-
-            let _ = window;
+            if restore_paths.is_empty() {
+                // no previous session — show daemon picker
+                let url = format!("http://127.0.0.1:{port}");
+                let _ = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    tauri::WebviewUrl::External(url.parse().unwrap()),
+                )
+                .title("mdlive")
+                .inner_size(1500.0, 1000.0)
+                .min_inner_size(600.0, 400.0)
+                .build()?;
+            } else {
+                // restore previous workspace windows
+                for path in &restore_paths {
+                    open_path_in_window(app.handle(), path.clone());
+                }
+            }
 
             build_menu(app)?;
 
@@ -430,8 +552,19 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::Opened { urls } = event {
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { .. } => {
+                APP_QUITTING.store(true, Ordering::SeqCst);
+                persist_workspaces();
+            }
+            tauri::RunEvent::WindowEvent { label, event, .. } => {
+                if matches!(event, tauri::WindowEvent::Destroyed)
+                    && !APP_QUITTING.load(Ordering::SeqCst)
+                {
+                    unregister_window_path(&label);
+                }
+            }
+            tauri::RunEvent::Opened { urls } => {
                 for url in urls {
                     if url.scheme() == "file" {
                         if let Ok(path) = url.to_file_path() {
@@ -440,6 +573,7 @@ pub fn run() {
                     }
                 }
             }
+            _ => {}
         });
 }
 

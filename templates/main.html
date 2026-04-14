@@ -495,7 +495,6 @@
           display: flex;
           flex-direction: row;
           align-items: stretch;
-          overflow: hidden;
           background: var(--code-bg);
           border-bottom: 1px solid var(--border-color);
           z-index: 10;
@@ -511,6 +510,14 @@
           transition: none;
       }
 
+      .tab-scroll {
+          display: flex;
+          flex: 1 1 0;
+          min-width: 0;
+          overflow: hidden;
+          align-items: stretch;
+      }
+
       .tab {
           display: flex;
           align-items: center;
@@ -524,10 +531,7 @@
           color: var(--text-color);
           background: transparent;
           user-select: none;
-          flex: 1 1 auto;
-          min-width: 60px;
-          max-width: 200px;
-          overflow: hidden;
+          flex-shrink: 0;
           transition: background 0.15s ease;
       }
 
@@ -567,8 +571,7 @@
       }
 
       .tab-name {
-          min-width: 0;
-          flex: 1 1 auto;
+          max-width: 160px;
           overflow: hidden;
           text-overflow: ellipsis;
       }
@@ -594,6 +597,93 @@
       .tab-close:hover {
           opacity: 1;
           background: var(--border-color-light);
+      }
+
+      /* overflow chevron */
+      .tab-overflow-btn {
+          display: none;
+          align-items: center;
+          justify-content: center;
+          width: 32px;
+          flex-shrink: 0;
+          border: none;
+          border-left: 1px solid var(--border-color);
+          background: var(--code-bg);
+          color: var(--text-color);
+          cursor: pointer;
+          font-size: 14px;
+          opacity: 0.6;
+          position: relative;
+      }
+      .tab-overflow-btn:hover { opacity: 1; }
+      .tab-overflow-btn.visible { display: flex; }
+
+      .tab-overflow-badge {
+          position: absolute;
+          top: 4px;
+          right: 3px;
+          min-width: 14px;
+          height: 14px;
+          border-radius: 7px;
+          background: var(--link-color);
+          color: var(--bg-color);
+          font-size: 9px;
+          font-weight: 700;
+          line-height: 14px;
+          text-align: center;
+          padding: 0 3px;
+          pointer-events: none;
+      }
+
+      /* overflow dropdown */
+      .tab-overflow-menu {
+          display: none;
+          position: absolute;
+          top: 36px;
+          right: 0;
+          min-width: 220px;
+          max-width: 360px;
+          max-height: 400px;
+          overflow-y: auto;
+          background: var(--bg-color);
+          border: 1px solid var(--border-color);
+          border-radius: 6px;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+          z-index: 100;
+          padding: 4px 0;
+      }
+      .tab-overflow-menu.show { display: block; }
+
+      .tab-overflow-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 10px;
+          cursor: pointer;
+          font-size: 13px;
+          color: var(--text-color);
+          white-space: nowrap;
+          overflow: hidden;
+      }
+      .tab-overflow-item:hover {
+          background: var(--border-color-light);
+      }
+      .tab-overflow-item.active {
+          font-weight: 600;
+          color: var(--link-color);
+      }
+      .tab-overflow-item .tab-dirty {
+          display: none;
+      }
+      .tab-overflow-item.dirty .tab-dirty {
+          display: inline-block;
+      }
+      .tab-overflow-item .tab-name {
+          flex: 1 1 auto;
+          min-width: 0;
+          max-width: none;
+          overflow: hidden;
+          text-overflow: ellipsis;
       }
 
       .has-tabs .page-container,
@@ -1712,7 +1802,8 @@
       }
 
       .page-container #content {
-          flex: 1;
+          flex: 1 0 auto;
+          padding-bottom: 40vh;
       }
 
       /* Editor mode styles */
@@ -2290,10 +2381,7 @@
           }
       }
 
-      /* Status bar + floating button clearance */
-      .page-container {
-          padding-bottom: 80px;
-      }
+      /* status bar clearance for editor mode */
       .editor-container {
           padding-bottom: 80px;
       }
@@ -3591,27 +3679,203 @@
             return sessionStorage.getItem(DRAFT_PREFIX + path);
         }
 
+        function makeTabEl(tab) {
+            var div = document.createElement('div');
+            div.className = 'tab';
+            if (tab.path === currentPath) div.className += ' active';
+            if (isDirty(tab.path)) div.className += ' dirty';
+            div.setAttribute('data-path', tab.path);
+            var fileParts = tab.path.split('/');
+            div.title = fileParts[fileParts.length - 1];
+
+            var dot = document.createElement('span');
+            dot.className = 'tab-dirty';
+            div.appendChild(dot);
+
+            var nameSpan = document.createElement('span');
+            nameSpan.className = 'tab-name';
+            nameSpan.textContent = getDisplayName(tab.path);
+            div.appendChild(nameSpan);
+
+            var closeBtn = document.createElement('button');
+            closeBtn.className = 'tab-close';
+            closeBtn.title = 'Close tab';
+            closeBtn.innerHTML = '&times;';
+            closeBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                removeTab(tab.path);
+            });
+            closeBtn.addEventListener('mousedown', function(e) {
+                e.stopPropagation();
+            });
+            div.appendChild(closeBtn);
+
+            div.addEventListener('click', function() {
+                switchTo(tab.path);
+            });
+
+            // drag-and-drop reordering
+            div.draggable = true;
+            div.addEventListener('dragstart', function(e) {
+                draggedPath = tab.path;
+                div.classList.add('dragging');
+                if (e.dataTransfer) {
+                    e.dataTransfer.effectAllowed = 'move';
+                    try { e.dataTransfer.setData('text/plain', tab.path); } catch(_) {}
+                }
+            });
+            div.addEventListener('dragend', function() {
+                draggedPath = null;
+                clearDropIndicators();
+            });
+            div.addEventListener('dragover', function(e) {
+                if (!draggedPath || draggedPath === tab.path) return;
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+                var rect = div.getBoundingClientRect();
+                var before = e.clientX < rect.left + rect.width / 2;
+                div.classList.toggle('drop-before', before);
+                div.classList.toggle('drop-after', !before);
+            });
+            div.addEventListener('dragleave', function() {
+                div.classList.remove('drop-before', 'drop-after');
+            });
+            div.addEventListener('drop', function(e) {
+                e.preventDefault();
+                var src = draggedPath;
+                clearDropIndicators();
+                if (!src || src === tab.path) return;
+                var rect = div.getBoundingClientRect();
+                var insertAfter = e.clientX >= rect.left + rect.width / 2;
+                reorderTab(src, tab.path, insertAfter);
+            });
+
+            return div;
+        }
+
+        // move a tab to the last position in the array (so it becomes visible)
+        function promoteTab(path) {
+            var idx = findTab(path);
+            if (idx === -1) return;
+            var item = tabs.splice(idx, 1)[0];
+            tabs.push(item);
+            save();
+        }
+
         function render() {
             if (!tabBar) return;
             tabBar.innerHTML = '';
+
+            // inner scroll area for visible tabs
+            var scrollEl = document.createElement('div');
+            scrollEl.className = 'tab-scroll';
+
             for (var i = 0; i < tabs.length; i++) {
-                (function(tab) {
-                    var div = document.createElement('div');
-                    div.className = 'tab';
-                    if (tab.path === currentPath) div.className += ' active';
-                    if (isDirty(tab.path)) div.className += ' dirty';
-                    div.setAttribute('data-path', tab.path);
-                    var fileParts = tab.path.split('/');
-                    div.title = fileParts[fileParts.length - 1];
+                scrollEl.appendChild(makeTabEl(tabs[i]));
+            }
+            tabBar.appendChild(scrollEl);
+
+            // chevron overflow button + dropdown
+            var chevBtn = document.createElement('button');
+            chevBtn.className = 'tab-overflow-btn';
+            chevBtn.title = 'More tabs';
+            chevBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">'
+                + '<path d="M4.5 6l3.5 4 3.5-4z"/></svg>';
+
+            var badge = document.createElement('span');
+            badge.className = 'tab-overflow-badge';
+            chevBtn.appendChild(badge);
+
+            var menu = document.createElement('div');
+            menu.className = 'tab-overflow-menu';
+            chevBtn.appendChild(menu);
+
+            chevBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var showing = menu.classList.toggle('show');
+                if (showing) buildOverflowMenu(scrollEl, menu, badge);
+            });
+
+            tabBar.appendChild(chevBtn);
+
+            // detect overflow after layout
+            requestAnimationFrame(function() {
+                updateOverflowState(scrollEl, chevBtn, badge);
+            });
+        }
+
+        function updateOverflowState(scrollEl, chevBtn, badge) {
+            var overflowing = scrollEl.scrollWidth > scrollEl.clientWidth;
+            chevBtn.classList.toggle('visible', overflowing);
+            if (overflowing) {
+                var hidden = countHiddenTabs(scrollEl);
+                badge.textContent = hidden;
+                badge.style.display = hidden > 0 ? '' : 'none';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        function countHiddenTabs(scrollEl) {
+            var count = 0;
+            var right = scrollEl.getBoundingClientRect().right;
+            var children = scrollEl.children;
+            for (var i = 0; i < children.length; i++) {
+                var r = children[i].getBoundingClientRect();
+                if (r.right > right + 1) count++;
+            }
+            return count;
+        }
+
+        function buildOverflowMenu(scrollEl, menu, badge) {
+            menu.innerHTML = '';
+            var right = scrollEl.getBoundingClientRect().right;
+            var children = scrollEl.children;
+            var hiddenPaths = {};
+            for (var i = 0; i < children.length; i++) {
+                var r = children[i].getBoundingClientRect();
+                if (r.right > right + 1) {
+                    hiddenPaths[children[i].getAttribute('data-path')] = true;
+                }
+            }
+
+            // show ALL tabs — hidden ones first, then visible as secondary section
+            var hiddenTabs = [];
+            var visibleTabs = [];
+            for (var j = 0; j < tabs.length; j++) {
+                if (hiddenPaths[tabs[j].path]) {
+                    hiddenTabs.push(tabs[j]);
+                } else {
+                    visibleTabs.push(tabs[j]);
+                }
+            }
+
+            var allItems = hiddenTabs.concat(visibleTabs);
+            if (hiddenTabs.length > 0 && visibleTabs.length > 0) {
+                // add a separator index to insert after hidden tabs
+                var sepAfter = hiddenTabs.length;
+            }
+
+            for (var k = 0; k < allItems.length; k++) {
+                (function(tab, idx) {
+                    if (sepAfter && idx === sepAfter) {
+                        var sep = document.createElement('div');
+                        sep.style.cssText = 'height:1px;background:var(--border-color);margin:4px 0;';
+                        menu.appendChild(sep);
+                    }
+                    var row = document.createElement('div');
+                    row.className = 'tab-overflow-item';
+                    if (tab.path === currentPath) row.className += ' active';
+                    if (isDirty(tab.path)) row.className += ' dirty';
 
                     var dot = document.createElement('span');
                     dot.className = 'tab-dirty';
-                    div.appendChild(dot);
+                    row.appendChild(dot);
 
-                    var nameSpan = document.createElement('span');
-                    nameSpan.className = 'tab-name';
-                    nameSpan.textContent = getDisplayName(tab.path);
-                    div.appendChild(nameSpan);
+                    var name = document.createElement('span');
+                    name.className = 'tab-name';
+                    name.textContent = getDisplayName(tab.path);
+                    row.appendChild(name);
 
                     var closeBtn = document.createElement('button');
                     closeBtn.className = 'tab-close';
@@ -3619,62 +3883,25 @@
                     closeBtn.innerHTML = '&times;';
                     closeBtn.addEventListener('click', function(e) {
                         e.stopPropagation();
+                        menu.classList.remove('show');
                         removeTab(tab.path);
                     });
-                    // don't let mousedown on close initiate a drag
-                    closeBtn.addEventListener('mousedown', function(e) {
-                        e.stopPropagation();
-                    });
-                    div.appendChild(closeBtn);
+                    row.appendChild(closeBtn);
 
-                    div.addEventListener('click', function() {
+                    row.addEventListener('click', function() {
+                        menu.classList.remove('show');
+                        promoteTab(tab.path);
                         switchTo(tab.path);
                     });
 
-                    // drag-and-drop reordering
-                    div.draggable = true;
-                    div.addEventListener('dragstart', function(e) {
-                        draggedPath = tab.path;
-                        div.classList.add('dragging');
-                        if (e.dataTransfer) {
-                            e.dataTransfer.effectAllowed = 'move';
-                            try { e.dataTransfer.setData('text/plain', tab.path); } catch(_) {}
-                        }
-                    });
-                    div.addEventListener('dragend', function() {
-                        draggedPath = null;
-                        clearDropIndicators();
-                    });
-                    div.addEventListener('dragover', function(e) {
-                        if (!draggedPath || draggedPath === tab.path) return;
-                        e.preventDefault();
-                        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-                        var rect = div.getBoundingClientRect();
-                        var before = e.clientX < rect.left + rect.width / 2;
-                        div.classList.toggle('drop-before', before);
-                        div.classList.toggle('drop-after', !before);
-                    });
-                    div.addEventListener('dragleave', function() {
-                        div.classList.remove('drop-before', 'drop-after');
-                    });
-                    div.addEventListener('drop', function(e) {
-                        e.preventDefault();
-                        var src = draggedPath;
-                        clearDropIndicators();
-                        if (!src || src === tab.path) return;
-                        var rect = div.getBoundingClientRect();
-                        var insertAfter = e.clientX >= rect.left + rect.width / 2;
-                        reorderTab(src, tab.path, insertAfter);
-                    });
-
-                    tabBar.appendChild(div);
-                })(tabs[i]);
+                    menu.appendChild(row);
+                })(allItems[k], k);
             }
         }
 
         function clearDropIndicators() {
             if (!tabBar) return;
-            var all = tabBar.querySelectorAll('.tab');
+            var all = tabBar.querySelectorAll('.tab-scroll .tab');
             for (var i = 0; i < all.length; i++) {
                 all[i].classList.remove('drop-before', 'drop-after');
             }
@@ -3862,6 +4089,15 @@
 
             document.body.classList.add('has-tabs');
             render();
+
+            // close overflow menu on outside click
+            document.addEventListener('click', function() {
+                var m = tabBar.querySelector('.tab-overflow-menu.show');
+                if (m) m.classList.remove('show');
+            });
+
+            // recheck overflow on resize
+            window.addEventListener('resize', function() { render(); });
         }
 
         return {
@@ -4931,6 +5167,7 @@
               .then(function(r) { return r.json(); })
               .then(function(data) {
                   if (data.success) {
+                      fetch('/api/session/persist', { method: 'POST' }).catch(function() {});
                       window.location.href = '/';
                   } else if (errEl) {
                       errEl.textContent = data.error || 'Failed to open workspace';
@@ -5575,6 +5812,7 @@
           .then(function(r) { return r.json(); })
           .then(function(data) {
               if (data.success) {
+                  fetch('/api/session/persist', { method: 'POST' }).catch(function() {});
                   window.location.href = '/';
               } else {
                   if (err) {
