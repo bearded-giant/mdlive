@@ -151,7 +151,8 @@ async fn render_file_with_default_flag(
 
     let rendered = if state.show_navigation() {
         let file_infos = state.get_file_infos();
-        let tree = build_file_tree(&file_infos);
+        let dir_paths = crate::util::scan_directories(&state.base_dir);
+        let tree = build_file_tree(&file_infos, &dir_paths);
 
         match template.render(context! {
             content => content,
@@ -270,7 +271,8 @@ fn render_editor(
 
     let rendered = if state.show_navigation() {
         let file_infos = state.get_file_infos();
-        let tree = build_file_tree(&file_infos);
+        let dir_paths = crate::util::scan_directories(&state.base_dir);
+        let tree = build_file_tree(&file_infos, &dir_paths);
 
         match template.render(context! {
             editor_mode => true,
@@ -350,7 +352,8 @@ fn render_not_found(state: &MarkdownState, path: &str) -> (StatusCode, Html<Stri
 
     let rendered = if state.show_navigation() {
         let file_infos = state.get_file_infos();
-        let tree = build_file_tree(&file_infos);
+        let dir_paths = crate::util::scan_directories(&state.base_dir);
+        let tree = build_file_tree(&file_infos, &dir_paths);
         template.render(context! {
             content => content,
             file_type => "markdown",

@@ -3,21 +3,23 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::state::FileInfo;
 
-pub(crate) fn build_file_tree(file_infos: &[FileInfo]) -> Vec<Value> {
+pub(crate) fn build_file_tree(file_infos: &[FileInfo], dir_paths: &[String]) -> Vec<Value> {
     let ts_map: HashMap<&str, (u64, u64)> = file_infos
         .iter()
         .map(|fi| (fi.name.as_str(), (fi.modified, fi.created)))
         .collect();
     let names: Vec<String> = file_infos.iter().map(|fi| fi.name.clone()).collect();
-    build_tree_level(&names, "", &ts_map)
+    build_tree_level(&names, dir_paths, "", &ts_map)
 }
 
 fn build_tree_level(
     paths: &[String],
+    dir_paths: &[String],
     prefix: &str,
     ts_map: &HashMap<&str, (u64, u64)>,
 ) -> Vec<Value> {
-    let mut dirs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // (sub_file_paths, sub_dir_paths) per immediate directory at this level
+    let mut dirs: BTreeMap<String, (Vec<String>, Vec<String>)> = BTreeMap::new();
     let mut files: Vec<String> = Vec::new();
 
     for path in paths {
@@ -26,21 +28,39 @@ fn build_tree_level(
             let rest = &path[slash_pos + 1..];
             dirs.entry(dir_name.to_string())
                 .or_default()
+                .0
                 .push(rest.to_string());
         } else {
             files.push(path.clone());
         }
     }
 
+    for path in dir_paths {
+        if path.is_empty() {
+            continue;
+        }
+        if let Some(slash_pos) = path.find('/') {
+            let dir_name = &path[..slash_pos];
+            let rest = &path[slash_pos + 1..];
+            dirs.entry(dir_name.to_string())
+                .or_default()
+                .1
+                .push(rest.to_string());
+        } else {
+            // an empty directory at this level -- ensure it has a tree entry
+            dirs.entry(path.clone()).or_default();
+        }
+    }
+
     let mut items: Vec<(String, Value)> = Vec::new();
 
-    for (dir_name, sub_paths) in &dirs {
+    for (dir_name, (sub_paths, sub_dirs)) in &dirs {
         let dir_prefix = if prefix.is_empty() {
             dir_name.clone()
         } else {
             format!("{}/{}", prefix, dir_name)
         };
-        let children = build_tree_level(sub_paths, &dir_prefix, ts_map);
+        let children = build_tree_level(sub_paths, sub_dirs, &dir_prefix, ts_map);
 
         // aggregate: modified = max of children, created = min of children
         let (dir_modified, dir_created) = aggregate_timestamps(&children);

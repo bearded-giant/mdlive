@@ -791,6 +791,9 @@ pub(crate) async fn api_create_directory(
         )
     })?;
 
+    // tell open clients to rebuild the sidebar so the new (empty) dir shows up
+    let _ = state.change_tx.send(ServerMessage::Reload);
+
     Ok((
         StatusCode::CREATED,
         Json(ApiResponse {

@@ -495,17 +495,13 @@
           display: flex;
           flex-direction: row;
           align-items: stretch;
-          overflow-x: auto;
-          overflow-y: hidden;
+          overflow: hidden;
           background: var(--code-bg);
           border-bottom: 1px solid var(--border-color);
           z-index: 10;
           transition: left var(--transition-speed) var(--transition-timing),
                       background var(--transition-speed) var(--transition-timing);
-          scrollbar-width: none;
       }
-
-      .tab-bar::-webkit-scrollbar { display: none; }
 
       body.sidebar-collapsed .tab-bar {
           left: var(--sidebar-collapsed-width);
@@ -519,7 +515,7 @@
           display: flex;
           align-items: center;
           gap: 6px;
-          padding: 0 12px;
+          padding: 0 10px;
           height: 100%;
           cursor: pointer;
           border-right: 1px solid var(--border-color);
@@ -528,7 +524,10 @@
           color: var(--text-color);
           background: transparent;
           user-select: none;
-          flex-shrink: 0;
+          flex: 1 1 auto;
+          min-width: 60px;
+          max-width: 200px;
+          overflow: hidden;
           transition: background 0.15s ease;
       }
 
@@ -540,6 +539,18 @@
           background: var(--bg-color);
           font-weight: 600;
           border-bottom: 2px solid var(--link-color);
+      }
+
+      .tab.dragging {
+          opacity: 0.4;
+      }
+
+      .tab.drop-before {
+          box-shadow: inset 2px 0 0 0 var(--link-color);
+      }
+
+      .tab.drop-after {
+          box-shadow: inset -2px 0 0 0 var(--link-color);
       }
 
       .tab-dirty {
@@ -556,7 +567,8 @@
       }
 
       .tab-name {
-          max-width: 160px;
+          min-width: 0;
+          flex: 1 1 auto;
           overflow: hidden;
           text-overflow: ellipsis;
       }
@@ -3119,7 +3131,7 @@
               return;
             }
             closeFileDialog();
-            window.location.href = '/new?dir=' + encodeURIComponent(fullPath);
+            // websocket Reload will refresh the sidebar tree with the new dir
           })
           .catch(function(err) {
             showFileDialogError(err.message);
@@ -3527,6 +3539,7 @@
         var tabs = [];
         var currentPath = currentFile;
         var tabBar = null;
+        var draggedPath = null;
 
         function load() {
             try {
@@ -3588,7 +3601,8 @@
                     if (tab.path === currentPath) div.className += ' active';
                     if (isDirty(tab.path)) div.className += ' dirty';
                     div.setAttribute('data-path', tab.path);
-                    div.title = tab.path;
+                    var fileParts = tab.path.split('/');
+                    div.title = fileParts[fileParts.length - 1];
 
                     var dot = document.createElement('span');
                     dot.className = 'tab-dirty';
@@ -3607,15 +3621,99 @@
                         e.stopPropagation();
                         removeTab(tab.path);
                     });
+                    // don't let mousedown on close initiate a drag
+                    closeBtn.addEventListener('mousedown', function(e) {
+                        e.stopPropagation();
+                    });
                     div.appendChild(closeBtn);
 
                     div.addEventListener('click', function() {
                         switchTo(tab.path);
                     });
 
+                    // drag-and-drop reordering
+                    div.draggable = true;
+                    div.addEventListener('dragstart', function(e) {
+                        draggedPath = tab.path;
+                        div.classList.add('dragging');
+                        if (e.dataTransfer) {
+                            e.dataTransfer.effectAllowed = 'move';
+                            try { e.dataTransfer.setData('text/plain', tab.path); } catch(_) {}
+                        }
+                    });
+                    div.addEventListener('dragend', function() {
+                        draggedPath = null;
+                        clearDropIndicators();
+                    });
+                    div.addEventListener('dragover', function(e) {
+                        if (!draggedPath || draggedPath === tab.path) return;
+                        e.preventDefault();
+                        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+                        var rect = div.getBoundingClientRect();
+                        var before = e.clientX < rect.left + rect.width / 2;
+                        div.classList.toggle('drop-before', before);
+                        div.classList.toggle('drop-after', !before);
+                    });
+                    div.addEventListener('dragleave', function() {
+                        div.classList.remove('drop-before', 'drop-after');
+                    });
+                    div.addEventListener('drop', function(e) {
+                        e.preventDefault();
+                        var src = draggedPath;
+                        clearDropIndicators();
+                        if (!src || src === tab.path) return;
+                        var rect = div.getBoundingClientRect();
+                        var insertAfter = e.clientX >= rect.left + rect.width / 2;
+                        reorderTab(src, tab.path, insertAfter);
+                    });
+
                     tabBar.appendChild(div);
                 })(tabs[i]);
             }
+        }
+
+        function clearDropIndicators() {
+            if (!tabBar) return;
+            var all = tabBar.querySelectorAll('.tab');
+            for (var i = 0; i < all.length; i++) {
+                all[i].classList.remove('drop-before', 'drop-after');
+            }
+        }
+
+        function reorderTab(fromPath, toPath, insertAfter) {
+            var fromIdx = findTab(fromPath);
+            var toIdx = findTab(toPath);
+            if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+            var item = tabs.splice(fromIdx, 1)[0];
+            // after splice, recompute target index
+            var newIdx = toIdx;
+            if (fromIdx < toIdx) newIdx = toIdx - 1;
+            if (insertAfter) newIdx += 1;
+            if (newIdx < 0) newIdx = 0;
+            if (newIdx > tabs.length) newIdx = tabs.length;
+            tabs.splice(newIdx, 0, item);
+            save();
+            render();
+        }
+
+        function closeActiveTab() {
+            if (tabs.length === 0) { try { window.close(); } catch(_){} return; }
+            var activePath = currentPath;
+            var onCurrent = findTab(activePath) !== -1;
+            if (!onCurrent) { try { window.close(); } catch(_){} return; }
+            if (tabs.length === 1) {
+                // closing the last tab closes the window (with dirty-check prompt)
+                if (isDirty(activePath)) {
+                    showConfirm('This tab has unsaved changes. Close anyway?', function() {
+                        clearDraft(activePath);
+                        try { window.close(); } catch(_){}
+                    });
+                    return;
+                }
+                try { window.close(); } catch(_){}
+                return;
+            }
+            removeTab(activePath);
         }
 
         function addTab(path, mode) {
@@ -3779,10 +3877,17 @@
             isDirty: isDirty,
             render: render,
             save: save,
+            closeActiveTab: closeActiveTab,
             tabs: function() { return tabs; },
             MAX_TABS: MAX_TABS
         };
     })();
+
+    // exposed for the Tauri wrapper's Cmd+W menu handler
+    window.mdliveCloseActiveTab = function() {
+        if (typeof TabManager === 'undefined') { try { window.close(); } catch(_){} return; }
+        TabManager.closeActiveTab();
+    };
 
     document.addEventListener('DOMContentLoaded', function() {
         TabManager.init();

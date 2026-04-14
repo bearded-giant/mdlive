@@ -25,6 +25,37 @@ fn scan_recursive(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+/// Return every subdirectory under `base_dir` as a base-relative path string,
+/// so empty directories still show up in the sidebar tree.
+pub(crate) fn scan_directories(base_dir: &Path) -> Vec<String> {
+    let mut dirs = Vec::new();
+    scan_dirs_recursive(base_dir, base_dir, &mut dirs);
+    dirs.sort();
+    dirs
+}
+
+fn scan_dirs_recursive(root: &Path, dir: &Path, out: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.file_name().is_some_and(|n| n == ".mdlive") {
+            continue;
+        }
+        if let Ok(rel) = path.strip_prefix(root) {
+            let rel = rel.to_string_lossy().to_string();
+            if !rel.is_empty() {
+                out.push(rel);
+            }
+        }
+        scan_dirs_recursive(root, &path, out);
+    }
+}
+
 pub(crate) fn is_markdown_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())

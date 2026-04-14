@@ -2,9 +2,8 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use mdlive::AppConfig;
-use tauri::menu::{
-    AboutMetadata, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
-};
+use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::Manager;
 
 #[cfg(target_os = "macos")]
 fn pick_file_or_folder(extensions: &[&str]) -> Option<PathBuf> {
@@ -275,6 +274,16 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .id("check_update")
         .build(app)?;
 
+    let close_tab = MenuItemBuilder::new("Close Tab")
+        .id("close_tab")
+        .accelerator("CmdOrCtrl+W")
+        .build(app)?;
+
+    let close_window = MenuItemBuilder::new("Close Window")
+        .id("close_window_custom")
+        .accelerator("Shift+CmdOrCtrl+W")
+        .build(app)?;
+
     let app_menu = SubmenuBuilder::new(app, "mdlive")
         .about(Some(AboutMetadata {
             version: Some(env!("CARGO_PKG_VERSION").into()),
@@ -298,7 +307,8 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .separator()
         .item(&recent_menu)
         .separator()
-        .item(&PredefinedMenuItem::close_window(app, None)?)
+        .item(&close_tab)
+        .item(&close_window)
         .build()?;
 
     let edit_menu = SubmenuBuilder::new(app, "Edit")
@@ -316,8 +326,6 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
     let window_menu = SubmenuBuilder::new(app, "Window")
         .minimize()
         .maximize()
-        .separator()
-        .close_window()
         .build()?;
 
     let menu = MenuBuilder::new(app)
@@ -379,6 +387,22 @@ pub fn run() {
                     let _ = config.save();
                 } else if id == "check_update" {
                     std::thread::spawn(check_for_updates);
+                } else if id == "close_tab" {
+                    for (_, win) in app_handle.webview_windows() {
+                        if win.is_focused().unwrap_or(false) {
+                            let _ = win.eval(
+                                "if (window.mdliveCloseActiveTab) { window.mdliveCloseActiveTab(); } else { window.close(); }",
+                            );
+                            break;
+                        }
+                    }
+                } else if id == "close_window_custom" {
+                    for (_, win) in app_handle.webview_windows() {
+                        if win.is_focused().unwrap_or(false) {
+                            let _ = win.close();
+                            break;
+                        }
+                    }
                 }
             });
 
