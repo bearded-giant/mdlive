@@ -19,6 +19,7 @@ pub use config::RecentWorkspace;
 pub use router::new_daemon_router;
 pub use router::new_daemon_router_with_config;
 pub use router::new_router;
+pub use router::new_router_with_config;
 pub use state::ServerMessage;
 pub use util::scan_supported_files;
 

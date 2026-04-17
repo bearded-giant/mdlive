@@ -31,6 +31,26 @@ pub fn new_router(
     Ok(build_routes(state))
 }
 
+pub fn new_router_with_config(
+    base_dir: PathBuf,
+    tracked_files: Vec<PathBuf>,
+    is_directory_mode: bool,
+    config: crate::config::AppConfig,
+) -> Result<Router> {
+    let base_dir = base_dir.canonicalize()?;
+
+    let mut md_state = MarkdownState::new(base_dir.clone(), tracked_files, is_directory_mode)?;
+    md_state.daemon_mode = true;
+    md_state.config = Some(config);
+
+    let state = Arc::new(Mutex::new(md_state));
+
+    let abort_handle = start_watcher(&base_dir, state.clone())?;
+    state.try_lock().unwrap().watcher_abort = Some(abort_handle);
+
+    Ok(build_routes(state))
+}
+
 pub fn new_daemon_router() -> Router {
     let state = Arc::new(Mutex::new(MarkdownState::new_daemon()));
     build_routes(state)

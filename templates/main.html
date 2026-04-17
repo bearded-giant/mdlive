@@ -874,26 +874,41 @@
           opacity: 0.9;
       }
 
-      .theme-toggle {
+      .footer-toggles {
           position: fixed;
           bottom: 20px;
           right: 20px;
+          display: flex;
+          gap: 8px;
+          z-index: 100;
+      }
+
+      .footer-toggles > button {
+          width: 40px;
+          height: 36px;
+          padding: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           background: var(--code-bg);
           border: 1px solid var(--border-color-light);
           border-radius: 6px;
-          padding: 8px 12px;
           cursor: pointer;
           font-size: 14px;
           color: var(--text-color);
           transition: background 0.2s var(--transition-timing),
                       border-color var(--transition-speed) var(--transition-timing);
-          z-index: 100;
       }
 
-      .theme-toggle:hover,
-      .theme-toggle:focus-visible {
+      .footer-toggles > button:hover,
+      .footer-toggles > button:focus-visible {
           background: var(--border-color-light);
           outline: none;
+      }
+
+      .theme-toggle {
+          font-size: 18px;
+          line-height: 1;
       }
 
       .edit-toggle {
@@ -1009,28 +1024,6 @@
           opacity: 0.8;
       }
 
-      .shortcuts-toggle {
-          position: fixed;
-          bottom: 20px;
-          right: 70px;
-          background: var(--code-bg);
-          border: 1px solid var(--border-color-light);
-          border-radius: 6px;
-          padding: 8px 12px;
-          cursor: pointer;
-          font-size: 14px;
-          color: var(--text-color);
-          transition: background 0.2s var(--transition-timing),
-                      border-color var(--transition-speed) var(--transition-timing);
-          z-index: 100;
-      }
-
-      .shortcuts-toggle:hover,
-      .shortcuts-toggle:focus-visible {
-          background: var(--border-color-light);
-          outline: none;
-      }
-
       .shortcuts-modal {
           display: none;
           position: fixed;
@@ -1091,28 +1084,6 @@
           font-size: 13px;
           min-width: 24px;
           text-align: center;
-      }
-
-      .about-toggle {
-          position: fixed;
-          bottom: 20px;
-          right: 120px;
-          background: var(--code-bg);
-          border: 1px solid var(--border-color-light);
-          border-radius: 6px;
-          padding: 8px 12px;
-          cursor: pointer;
-          font-size: 14px;
-          color: var(--text-color);
-          transition: background 0.2s var(--transition-timing),
-                      border-color var(--transition-speed) var(--transition-timing);
-          z-index: 100;
-      }
-
-      .about-toggle:hover,
-      .about-toggle:focus-visible {
-          background: var(--border-color-light);
-          outline: none;
       }
 
       .about-modal {
@@ -1219,28 +1190,6 @@
           font-size: 12px;
           color: var(--blockquote-color);
           margin: 16px 0 0 0;
-      }
-
-      .workspace-toggle {
-          position: fixed;
-          bottom: 20px;
-          right: 170px;
-          background: var(--code-bg);
-          border: 1px solid var(--border-color-light);
-          border-radius: 6px;
-          padding: 8px 12px;
-          cursor: pointer;
-          font-size: 14px;
-          color: var(--text-color);
-          transition: background 0.2s var(--transition-timing),
-                      border-color var(--transition-speed) var(--transition-timing);
-          z-index: 100;
-      }
-
-      .workspace-toggle:hover,
-      .workspace-toggle:focus-visible {
-          background: var(--border-color-light);
-          outline: none;
       }
 
       .workspace-modal {
@@ -4207,44 +4156,46 @@
       </div>
     </div>
 
-    {% if daemon_mode|default(false) %}
-    <button
-      class="workspace-toggle"
-      onclick="openWorkspaceModal()"
-      title="Open workspace (o)"
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path>
-      </svg>
-    </button>
-    {% endif %}
-    <button
-      class="about-toggle"
-      onclick="openAboutModal()"
-      title="About (?)"
-    >?</button>
-    <button
-      class="shortcuts-toggle"
-      onclick="openShortcutsModal()"
-      title="Keyboard shortcuts (/)"
-    >
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
+    <div class="footer-toggles">
+      {% if daemon_mode|default(false) %}
+      <button
+        class="workspace-toggle"
+        onclick="openWorkspaceModal()"
+        title="Open workspace (o)"
       >
-        <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
-        <path
-          d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M8 16h8"
-        ></path>
-      </svg>
-    </button>
-    <button class="theme-toggle" onclick="openThemeModal()">🎨</button>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path>
+        </svg>
+      </button>
+      {% endif %}
+      <button
+        class="about-toggle"
+        onclick="openAboutModal()"
+        title="About (?)"
+      >?</button>
+      <button
+        class="shortcuts-toggle"
+        onclick="openShortcutsModal()"
+        title="Keyboard shortcuts (/)"
+      >
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+          <path
+            d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M8 16h8"
+          ></path>
+        </svg>
+      </button>
+      <button class="theme-toggle" onclick="openThemeModal()">🎨</button>
+    </div>
 
     {% if editor_mode %}
     <div class="editor-container">

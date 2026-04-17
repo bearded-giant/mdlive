@@ -173,7 +173,8 @@ fn start_server_for_path(path: &std::path::Path) -> Result<u16, String> {
     };
 
     let router =
-        mdlive::new_router(base_dir, tracked_files, is_dir_mode).map_err(|e| e.to_string())?;
+        mdlive::new_router_with_config(base_dir, tracked_files, is_dir_mode, AppConfig::load())
+            .map_err(|e| e.to_string())?;
 
     rt.block_on(async {
         let (listener, port) = mdlive::bind_with_port_increment("127.0.0.1", mdlive::DEFAULT_PORT)
