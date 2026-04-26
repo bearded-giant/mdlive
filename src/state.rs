@@ -227,10 +227,22 @@ impl MarkdownState {
         let mut infos: Vec<FileInfo> = self
             .tracked_files
             .iter()
-            .map(|(name, tf)| FileInfo {
-                name: name.clone(),
-                modified: to_epoch(tf.last_modified),
-                created: to_epoch(tf.created),
+            .map(|(name, tf)| {
+                // restat disk so sidebar reflects edits the watcher may have missed
+                // or that happened before this file was opened in mdlive
+                let (modified, created) = match fs::metadata(&tf.path) {
+                    Ok(meta) => {
+                        let m = meta.modified().unwrap_or(tf.last_modified);
+                        let c = meta.created().unwrap_or(tf.created);
+                        (to_epoch(m), to_epoch(c))
+                    }
+                    Err(_) => (to_epoch(tf.last_modified), to_epoch(tf.created)),
+                };
+                FileInfo {
+                    name: name.clone(),
+                    modified,
+                    created,
+                }
             })
             .collect();
         infos.sort_by(|a, b| a.name.cmp(&b.name));

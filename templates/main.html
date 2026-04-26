@@ -342,8 +342,8 @@
           flex-shrink: 0;
       }
 
-      .file-tree.sort-by-name .file-ts {
-          display: none;
+      .file-tree a .file-ts {
+          margin-left: 8px;
       }
 
       .file-tree a:hover,
@@ -2660,15 +2660,15 @@
         var isNameSort = mode.startsWith("name");
         tree.classList.toggle("sort-by-name", isNameSort);
 
-        if (!isNameSort) {
-          var field = mode.startsWith("modified") ? "modified" : "created";
-          tree.querySelectorAll(".file-ts").forEach(function (span) {
-            var el = span.closest("a");
-            if (!el) return;
-            var epoch = parseInt(el.getAttribute("data-" + field), 10);
-            span.textContent = epoch ? formatRelativeTime(epoch) : "";
-          });
-        }
+        // always populate timestamps so users can spot recent files even when
+        // sorting by name. created sort uses created; everything else shows modified.
+        var field = mode.startsWith("created") ? "created" : "modified";
+        tree.querySelectorAll(".file-ts").forEach(function (span) {
+          var el = span.closest("a");
+          if (!el) return;
+          var epoch = parseInt(el.getAttribute("data-" + field), 10);
+          span.textContent = epoch ? formatRelativeTime(epoch) : "";
+        });
 
         sortTreeUl(tree, mode);
       }

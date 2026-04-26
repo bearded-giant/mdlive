@@ -413,6 +413,68 @@ async fn test_directory_mode_tree_sidebar() {
 }
 
 #[tokio::test]
+async fn test_tree_links_carry_modified_timestamps() {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    fs::write(temp_dir.path().join("readme.md"), "# Readme").expect("Failed to write");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_supported_files(&base_dir).expect("Failed to scan");
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    let response = server.get("/readme.md").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    let needle = r#"href="/readme.md" data-modified=""#;
+    let idx = body
+        .find(needle)
+        .expect("readme.md link should expose data-modified");
+    let after = &body[idx + needle.len()..];
+    let end = after.find('"').expect("data-modified should be quoted");
+    let value: u64 = after[..end]
+        .parse()
+        .expect("data-modified should be a unix epoch integer");
+    assert!(value > 0, "data-modified must reflect file mtime");
+}
+
+#[tokio::test]
+async fn test_tree_modified_reflects_fresh_disk_mtime() {
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    let file_path = temp_dir.path().join("readme.md");
+    fs::write(&file_path, "# Readme").expect("Failed to write");
+
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked_files = scan_supported_files(&base_dir).expect("Failed to scan");
+    let router = new_router(base_dir, tracked_files, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+
+    fn extract_modified(body: &str) -> u64 {
+        let needle = r#"href="/readme.md" data-modified=""#;
+        let idx = body.find(needle).expect("link with data-modified");
+        let after = &body[idx + needle.len()..];
+        let end = after.find('"').expect("quoted attr");
+        after[..end].parse().expect("epoch int")
+    }
+
+    let initial = extract_modified(&server.get("/readme.md").await.text());
+
+    // simulate an external edit the watcher might miss. sleep past the 1s
+    // mtime resolution so the new write produces a distinguishable epoch.
+    sleep(Duration::from_millis(1100));
+    fs::write(&file_path, "# Readme updated").expect("Failed to write");
+
+    let refreshed = extract_modified(&server.get("/readme.md").await.text());
+    assert!(
+        refreshed > initial,
+        "tree should reflect fresh disk mtime: initial={initial}, refreshed={refreshed}"
+    );
+}
+
+#[tokio::test]
 async fn test_nested_file_active_highlighting() {
     let temp_dir = tempdir().expect("Failed to create temp dir");
 
