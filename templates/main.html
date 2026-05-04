@@ -1970,6 +1970,39 @@
           background: var(--border-color-light);
       }
 
+      .copy-path-btn {
+          padding: 4px 6px;
+          border: none;
+          background: transparent;
+          cursor: pointer;
+          color: var(--text-color);
+          opacity: 0.4;
+          transition: opacity 0.15s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          position: relative;
+          margin-right: 4px;
+      }
+
+      .copy-path-btn:hover {
+          opacity: 1;
+          background: var(--border-color-light);
+          border-radius: 4px;
+      }
+
+      .copy-path-btn.copied::after {
+          content: 'Copied!';
+          position: absolute;
+          bottom: -24px;
+          left: 50%;
+          transform: translateX(-50%);
+          font-size: 11px;
+          color: #a6e3a1;
+          white-space: nowrap;
+          pointer-events: none;
+      }
+
       .editor-btn-destructive {
           color: #e64553;
           border-color: transparent;
@@ -3097,6 +3130,16 @@
       function hideContextMenu() {
         var menu = document.getElementById("contextMenu");
         if (menu) menu.classList.remove("show");
+      }
+
+      function copyFilePath(btn) {
+        var rel = document.querySelector('.editor-filename');
+        if (!rel) return;
+        var full = baseDir ? baseDir + '/' + rel.textContent : rel.textContent;
+        navigator.clipboard.writeText(full).then(function() {
+          btn.classList.add('copied');
+          setTimeout(function() { btn.classList.remove('copied'); }, 1200);
+        });
       }
 
       function copyRawMarkdown(path) {
@@ -4336,6 +4379,13 @@
         {% else %}
         <span class="editor-filename">{{ current_file }}</span>
         <button
+          class="copy-path-btn"
+          onclick="copyFilePath(this)"
+          title="Copy file path"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        </button>
+        <button
           class="editor-btn editor-btn-icon"
           onclick="editorRename()"
           title="Rename / move"
@@ -5284,6 +5334,13 @@
       <div class="page-header">
         {% if current_file %}
         <span class="editor-filename">{{ current_file }}</span>
+        <button
+          class="copy-path-btn"
+          onclick="copyFilePath(this)"
+          title="Copy file path"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+        </button>
         <a
           class="edit-toggle"
           href="/edit/{{ current_file|safe }}"
