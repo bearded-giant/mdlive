@@ -38,6 +38,14 @@ lto = true
 codegen-units = 1
 panic = "abort"
 
+# keep backtraces, drop full DWARF symbols (~60% smaller debug target)
+[profile.dev]
+debug = "line-tables-only"
+
+# zero debuginfo for third-party deps -- biggest single saving
+[profile.dev.package."*"]
+debug = false
+
 [dev-dependencies]
 axum-test = { version = "16.0", features = ["ws"] }
 tempfile = "3.0"

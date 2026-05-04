@@ -446,3 +446,91 @@ async fn test_editor_context_menu_has_edit() {
         "context menu JS should include Edit option"
     );
 }
+
+// --- workspace tabs persistence (server-side store survives port shifts) ---
+
+#[tokio::test]
+async fn test_get_workspace_tabs_empty_when_no_state() {
+    let (server, _dir) = create_directory_server().await;
+
+    let response = server.get("/api/workspace/tabs").await;
+    assert_eq!(response.status_code(), 200);
+    let json: serde_json::Value = response.json();
+    assert_eq!(json["tabs"].as_array().unwrap().len(), 0);
+    assert!(json["active"].is_null());
+}
+
+#[tokio::test]
+async fn test_save_then_get_workspace_tabs() {
+    let (server, _dir) = create_directory_server().await;
+
+    let payload = serde_json::json!({
+        "tabs": [
+            { "path": "test1.md", "mode": "view" },
+            { "path": "test2.markdown", "mode": "edit" }
+        ],
+        "active": "test2.markdown"
+    });
+
+    let post = server.post("/api/workspace/tabs").json(&payload).await;
+    assert_eq!(post.status_code(), 200);
+
+    let get = server.get("/api/workspace/tabs").await;
+    assert_eq!(get.status_code(), 200);
+    let json: serde_json::Value = get.json();
+    let tabs = json["tabs"].as_array().unwrap();
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs[0]["path"], "test1.md");
+    assert_eq!(tabs[1]["path"], "test2.markdown");
+    assert_eq!(tabs[1]["mode"], "edit");
+    assert_eq!(json["active"], "test2.markdown");
+}
+
+#[tokio::test]
+async fn test_workspace_tabs_persist_to_mdlive_dir() {
+    let (server, temp_dir) = create_directory_server().await;
+
+    let payload = serde_json::json!({
+        "tabs": [{ "path": "test1.md", "mode": "view" }],
+        "active": "test1.md"
+    });
+    server
+        .post("/api/workspace/tabs")
+        .json(&payload)
+        .await
+        .assert_status_ok();
+
+    let tabs_file = temp_dir.path().join(".mdlive").join("tabs.json");
+    assert!(tabs_file.exists(), ".mdlive/tabs.json should be written");
+    let written = fs::read_to_string(&tabs_file).unwrap();
+    assert!(written.contains("test1.md"));
+    assert!(written.contains("\"active\""));
+}
+
+#[tokio::test]
+async fn test_landing_renders_server_tabs_for_resume() {
+    let (server, _dir) = create_directory_server().await;
+
+    // seed tab state
+    let payload = serde_json::json!({
+        "tabs": [{ "path": "test2.markdown", "mode": "view" }],
+        "active": "test2.markdown"
+    });
+    server
+        .post("/api/workspace/tabs")
+        .json(&payload)
+        .await
+        .assert_status_ok();
+
+    // landing should embed the server tab state for the resume script
+    let response = server.get("/").await;
+    let body = response.text();
+    assert!(
+        body.contains("__serverTabs"),
+        "landing should expose __serverTabs JS var for resume"
+    );
+    assert!(
+        body.contains("test2.markdown"),
+        "embedded tab payload should contain saved path"
+    );
+}

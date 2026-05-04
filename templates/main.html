@@ -531,6 +531,7 @@
           color: var(--text-color);
           background: transparent;
           user-select: none;
+          -webkit-user-drag: element;
           flex-shrink: 0;
           transition: background 0.15s ease;
       }
@@ -1022,6 +1023,67 @@
       .theme-card-sample {
           font-size: 11px;
           opacity: 0.8;
+      }
+
+      .find-bar {
+          display: none;
+          position: fixed;
+          top: 12px;
+          right: 16px;
+          z-index: 10000;
+          background: var(--code-bg, var(--bg-color));
+          color: var(--text-color);
+          border: 1px solid var(--border-color);
+          border-radius: 8px;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+          padding: 6px 8px;
+          align-items: center;
+          gap: 6px;
+          font-size: 13px;
+      }
+      .find-bar.show { display: flex; }
+      .find-bar input {
+          width: 220px;
+          padding: 4px 8px;
+          background: var(--bg-color);
+          color: var(--text-color);
+          border: 1px solid var(--border-color);
+          border-radius: 4px;
+          outline: none;
+          font-family: inherit;
+          font-size: 13px;
+      }
+      .find-bar input:focus { border-color: var(--link-color); }
+      .find-bar .find-count {
+          min-width: 56px;
+          text-align: center;
+          opacity: 0.75;
+          font-variant-numeric: tabular-nums;
+          font-size: 12px;
+      }
+      .find-bar button {
+          background: transparent;
+          color: var(--text-color);
+          border: 1px solid var(--border-color);
+          border-radius: 4px;
+          width: 24px;
+          height: 24px;
+          line-height: 1;
+          cursor: pointer;
+          font-size: 14px;
+          padding: 0;
+      }
+      .find-bar button:hover { border-color: var(--link-color); }
+      mark.find-hit {
+          background: #ffe066;
+          color: #000;
+          border-radius: 2px;
+          padding: 0 1px;
+      }
+      mark.find-hit.active {
+          background: #ff8c1a;
+          color: #000;
+          outline: 1px solid #ff8c1a;
       }
 
       .shortcuts-modal {
@@ -1815,6 +1877,28 @@
       }
       .not-found-page a {
           color: var(--link-color);
+      }
+
+      .landing-page {
+          text-align: center;
+          padding: 100px 20px;
+          opacity: 0.85;
+      }
+      .landing-page h2 {
+          margin: 0 0 12px;
+          font-size: 22px;
+          font-weight: 500;
+      }
+      .landing-page p {
+          opacity: 0.6;
+          margin: 0;
+          font-size: 14px;
+      }
+      .landing-page code {
+          background: var(--code-bg, rgba(127,127,127,0.15));
+          padding: 1px 6px;
+          border-radius: 4px;
+          font-size: 12px;
       }
 
       .editor-spacer {
@@ -3497,6 +3581,8 @@
       var baseDir = {{ base_dir|default('')|tojson }};
       var isDefaultFile = {{ is_default_file|default(false)|tojson }};
       var unavailablePath = {{ unavailable_path|default('')|tojson }};
+      // server-injected tab state (authoritative across launches/ports)
+      var __serverTabs = {{ saved_tabs|default(none)|tojson }};
     </script>
     <script>
     // 404 recovery: if the URL matches a saved tab, close it and jump to the
@@ -3538,18 +3624,27 @@
     })();
     </script>
     <script>
-    // Run before TabManager boots: when re-opening a workspace we land on the
-    // alphabetically first file, which isn't what the user was looking at.
-    // If they had tabs saved, jump straight to the last active one so the
-    // default file never gets added to the tab list.
+    // Resume on landing: if this workspace has saved tabs (server-side first,
+    // localStorage fallback), jump to the last active tab. Stay on landing
+    // otherwise. Server-side storage survives port shifts across launches.
     (function() {
-        if (!showNavigation || !isDefaultFile || !currentFile) return;
+        if (!showNavigation) return;
+        if (currentFile) return;  // already viewing a file -- no resume needed
         try {
-            var stored = localStorage.getItem('mdlive-tabs:' + baseDir);
-            var savedTabs = stored ? JSON.parse(stored) : [];
-            if (!Array.isArray(savedTabs) || savedTabs.length === 0) return;
+            var savedTabs = [];
+            var activePath = null;
 
-            var activePath = localStorage.getItem('mdlive-active-tab:' + baseDir);
+            if (__serverTabs && Array.isArray(__serverTabs.tabs) && __serverTabs.tabs.length > 0) {
+                savedTabs = __serverTabs.tabs;
+                activePath = __serverTabs.active || null;
+            } else {
+                var stored = localStorage.getItem('mdlive-tabs:' + baseDir);
+                savedTabs = stored ? JSON.parse(stored) : [];
+                if (!Array.isArray(savedTabs)) savedTabs = [];
+                activePath = localStorage.getItem('mdlive-active-tab:' + baseDir);
+            }
+            if (savedTabs.length === 0) return;
+
             var target = null;
             if (activePath) {
                 for (var i = 0; i < savedTabs.length; i++) {
@@ -3560,11 +3655,11 @@
                 }
             }
             if (!target) target = savedTabs[savedTabs.length - 1];
-            if (!target || !target.path || target.path === currentFile) return;
+            if (!target || !target.path) return;
 
             var url = target.mode === 'edit' ? '/edit/' + target.path : '/' + target.path;
             window.location.replace(url);
-        } catch(e) { /* fall through and render the default file */ }
+        } catch(e) { /* fall through and render the landing page */ }
     })();
     </script>
     <script>
@@ -3579,15 +3674,41 @@
         var draggedPath = null;
 
         function load() {
+            // prefer server-injected tabs (survives port shifts); fall back to localStorage
             try {
+                if (__serverTabs && Array.isArray(__serverTabs.tabs) && __serverTabs.tabs.length > 0) {
+                    tabs = __serverTabs.tabs.slice();
+                    if (__serverTabs.active) {
+                        try { localStorage.setItem(ACTIVE_KEY, __serverTabs.active); } catch(_) {}
+                    }
+                    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs)); } catch(_) {}
+                    return;
+                }
                 var stored = localStorage.getItem(STORAGE_KEY);
                 if (stored) tabs = JSON.parse(stored);
                 if (!Array.isArray(tabs)) tabs = [];
             } catch(e) { tabs = []; }
         }
 
+        var __saveTimer = null;
+        function persistToServer() {
+            try {
+                var active = null;
+                try { active = localStorage.getItem(ACTIVE_KEY); } catch(_) {}
+                fetch('/api/workspace/tabs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tabs: tabs, active: active }),
+                    keepalive: true
+                }).catch(function() {});
+            } catch(_) {}
+        }
+
         function save() {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs));
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs)); } catch(_) {}
+            // debounce server writes; quick edits coalesce into a single POST
+            if (__saveTimer) clearTimeout(__saveTimer);
+            __saveTimer = setTimeout(persistToServer, 200);
         }
 
         function findTab(path) {
@@ -3873,22 +3994,9 @@
         }
 
         function closeActiveTab() {
-            if (tabs.length === 0) { try { window.close(); } catch(_){} return; }
+            if (tabs.length === 0) return;
             var activePath = currentPath;
-            var onCurrent = findTab(activePath) !== -1;
-            if (!onCurrent) { try { window.close(); } catch(_){} return; }
-            if (tabs.length === 1) {
-                // closing the last tab closes the window (with dirty-check prompt)
-                if (isDirty(activePath)) {
-                    showConfirm('This tab has unsaved changes. Close anyway?', function() {
-                        clearDraft(activePath);
-                        try { window.close(); } catch(_){}
-                    });
-                    return;
-                }
-                try { window.close(); } catch(_){}
-                return;
-            }
+            if (findTab(activePath) === -1) return;
             removeTab(activePath);
         }
 
@@ -3930,14 +4038,8 @@
 
             if (path === currentPath) {
                 if (tabs.length === 0) {
-                    currentPath = '';
                     try { localStorage.removeItem(ACTIVE_KEY); } catch(e) {}
-                    var container = document.querySelector('.editor-container') || document.querySelector('.page-container');
-                    if (container) container.style.display = 'none';
-                    document.querySelectorAll('.status-bar-mode').forEach(function(el) { el.style.display = 'none'; });
-                    history.replaceState(null, '', '/');
-                    document.title = 'mdlive';
-                    render();
+                    window.location.href = '/';
                     return;
                 }
                 var nextIdx = Math.min(idx, tabs.length - 1);
@@ -4031,9 +4133,9 @@
                 } else {
                     tabs[idx].mode = mode;
                 }
-                save();
-                // remember which tab was active so a future re-open lands here
+                // remember which tab was active before save() so server gets the new active
                 try { localStorage.setItem(ACTIVE_KEY, currentPath); } catch(e) {}
+                save();
             }
 
             document.body.classList.add('has-tabs');
@@ -4047,6 +4149,24 @@
 
             // recheck overflow on resize
             window.addEventListener('resize', function() { render(); });
+
+            // flush pending save synchronously on unload so the server captures
+            // the latest tab order even mid-debounce
+            window.addEventListener('pagehide', function() {
+                if (__saveTimer) {
+                    clearTimeout(__saveTimer);
+                    __saveTimer = null;
+                }
+                try {
+                    var active = null;
+                    try { active = localStorage.getItem(ACTIVE_KEY); } catch(_) {}
+                    var payload = JSON.stringify({ tabs: tabs, active: active });
+                    if (navigator.sendBeacon) {
+                        var blob = new Blob([payload], { type: 'application/json' });
+                        navigator.sendBeacon('/api/workspace/tabs', blob);
+                    }
+                } catch(_) {}
+            });
         }
 
         return {
@@ -5578,6 +5698,20 @@
       </div>
     </div>
 
+    <div class="find-bar" id="findBar" role="search">
+      <input
+        type="text"
+        id="findInput"
+        placeholder="Find in page"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <span class="find-count" id="findCount">0 / 0</span>
+      <button type="button" id="findPrev" title="Previous (Shift+Enter)">&#9650;</button>
+      <button type="button" id="findNext" title="Next (Enter)">&#9660;</button>
+      <button type="button" id="findClose" title="Close (Esc)">&times;</button>
+    </div>
+
     <div class="shortcuts-modal" id="shortcutsModal">
       <div class="shortcuts-modal-content">
         <h3>Keyboard Shortcuts</h3>
@@ -5605,6 +5739,10 @@
           <tr>
             <td><span class="shortcuts-key">s</span></td>
             <td>Focus search</td>
+          </tr>
+          <tr>
+            <td><span class="shortcuts-key">Cmd/Ctrl+F</span></td>
+            <td>Find in page</td>
           </tr>
           <tr>
             <td><span class="shortcuts-key">Ctrl+S</span></td>
@@ -6238,6 +6376,153 @@
       document.getElementById('shortcutsModal').addEventListener('click', function(e) {
           if (e.target === this) closeShortcutsModal();
       });
+
+      // find-in-page
+      (function() {
+          var bar = document.getElementById('findBar');
+          var input = document.getElementById('findInput');
+          var countEl = document.getElementById('findCount');
+          var prevBtn = document.getElementById('findPrev');
+          var nextBtn = document.getElementById('findNext');
+          var closeBtn = document.getElementById('findClose');
+          if (!bar || !input) return;
+
+          var matches = [];
+          var activeIdx = -1;
+          var lastQuery = '';
+
+          function findRoot() {
+              return document.getElementById('content')
+                  || document.getElementById('editorPreview');
+          }
+
+          function clearMarks() {
+              var root = findRoot();
+              if (!root) return;
+              var hits = root.querySelectorAll('mark.find-hit');
+              hits.forEach(function(m) {
+                  var t = document.createTextNode(m.textContent);
+                  m.parentNode.replaceChild(t, m);
+              });
+              if (hits.length) root.normalize();
+              matches = [];
+              activeIdx = -1;
+          }
+
+          function wrapMatches(query) {
+              var root = findRoot();
+              if (!root || !query) return [];
+              var lc = query.toLowerCase();
+              var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                  acceptNode: function(n) {
+                      if (!n.nodeValue || !n.nodeValue.length) return NodeFilter.FILTER_REJECT;
+                      var p = n.parentNode;
+                      while (p && p !== root) {
+                          var t = p.nodeName;
+                          if (t === 'SCRIPT' || t === 'STYLE' || t === 'MARK') return NodeFilter.FILTER_REJECT;
+                          p = p.parentNode;
+                      }
+                      return NodeFilter.FILTER_ACCEPT;
+                  }
+              });
+              var nodes = [];
+              var n;
+              while ((n = walker.nextNode())) nodes.push(n);
+              var hits = [];
+              nodes.forEach(function(node) {
+                  var txt = node.nodeValue;
+                  var lower = txt.toLowerCase();
+                  if (lower.indexOf(lc) === -1) return;
+                  var frag = document.createDocumentFragment();
+                  var last = 0;
+                  var pos = 0;
+                  while ((pos = lower.indexOf(lc, last)) !== -1) {
+                      if (pos > last) frag.appendChild(document.createTextNode(txt.slice(last, pos)));
+                      var m = document.createElement('mark');
+                      m.className = 'find-hit';
+                      m.textContent = txt.slice(pos, pos + lc.length);
+                      frag.appendChild(m);
+                      hits.push(m);
+                      last = pos + lc.length;
+                  }
+                  if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last)));
+                  node.parentNode.replaceChild(frag, node);
+              });
+              return hits;
+          }
+
+          function updateCount() {
+              countEl.textContent = matches.length
+                  ? (activeIdx + 1) + ' / ' + matches.length
+                  : '0 / 0';
+          }
+
+          function setActive(idx) {
+              if (!matches.length) { activeIdx = -1; updateCount(); return; }
+              if (activeIdx >= 0 && matches[activeIdx]) matches[activeIdx].classList.remove('active');
+              activeIdx = ((idx % matches.length) + matches.length) % matches.length;
+              var el = matches[activeIdx];
+              el.classList.add('active');
+              el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              updateCount();
+          }
+
+          function runSearch(query) {
+              clearMarks();
+              lastQuery = query;
+              if (!query) { updateCount(); return; }
+              matches = wrapMatches(query);
+              if (matches.length) setActive(0); else updateCount();
+          }
+
+          window.openFindBar = function() {
+              bar.classList.add('show');
+              input.focus();
+              input.select();
+              if (input.value && input.value !== lastQuery) runSearch(input.value);
+          };
+
+          window.closeFindBar = function() {
+              bar.classList.remove('show');
+              clearMarks();
+              lastQuery = '';
+              input.blur();
+              updateCount();
+          };
+
+          var debounce;
+          input.addEventListener('input', function() {
+              clearTimeout(debounce);
+              var q = input.value;
+              debounce = setTimeout(function() { runSearch(q); }, 80);
+          });
+
+          input.addEventListener('keydown', function(e) {
+              if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (!matches.length && input.value) { runSearch(input.value); return; }
+                  setActive(activeIdx + (e.shiftKey ? -1 : 1));
+              } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  closeFindBar();
+              }
+          });
+
+          nextBtn.addEventListener('click', function() { setActive(activeIdx + 1); });
+          prevBtn.addEventListener('click', function() { setActive(activeIdx - 1); });
+          closeBtn.addEventListener('click', closeFindBar);
+
+          document.addEventListener('keydown', function(e) {
+              if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+                  e.preventDefault();
+                  openFindBar();
+              } else if (e.key === 'F3') {
+                  e.preventDefault();
+                  if (!bar.classList.contains('show')) openFindBar();
+                  else setActive(activeIdx + (e.shiftKey ? -1 : 1));
+              }
+          });
+      })();
 
       // close about modal on click outside
       document.getElementById('aboutModal').addEventListener('click', function(e) {

@@ -1,19 +1,33 @@
-.PHONY: build install install-cli install-dev test check fmt lint clean changelog tauri dev reset-app
+.PHONY: build install install-cli install-dev test check fmt lint clean changelog tauri dev reset-app reset-app-hard
 
 BUNDLE_ID := com.beardedgiant.mdlive
 APP_PATH := /Applications/mdlive.app
 
+# default reset preserves LocalStorage (tabs, drafts, ui prefs).
+# wipes only HTTP/asset caches + saved app state so new JS/HTML loads.
 reset-app:
 	@echo "Stopping mdlive daemon..."
 	-@pkill -f "mdlive --daemon" 2>/dev/null || true
 	-@rm -f $$HOME/.config/mdlive/daemon.port
-	@echo "Wiping WKWebView caches for $(BUNDLE_ID)..."
+	@echo "Wiping WKWebView HTTP/asset caches (LocalStorage preserved)..."
+	-@find "$$HOME/Library/WebKit/$(BUNDLE_ID)/WebsiteData" -mindepth 1 -maxdepth 1 ! -name LocalStorage -exec rm -rf {} + 2>/dev/null || true
+	-@rm -rf "$$HOME/Library/Caches/$(BUNDLE_ID)"
+	-@rm -rf "$$HOME/Library/Saved Application State/$(BUNDLE_ID).savedState"
+	@echo "App caches cleared (LocalStorage + Application Support kept)."
+
+# nuclear option: wipe everything including LocalStorage + prefs.
+# use when debugging from a clean slate.
+reset-app-hard:
+	@echo "Stopping mdlive daemon..."
+	-@pkill -f "mdlive --daemon" 2>/dev/null || true
+	-@rm -f $$HOME/.config/mdlive/daemon.port
+	@echo "Wiping ALL WKWebView state for $(BUNDLE_ID) (incl. LocalStorage)..."
 	-@rm -rf "$$HOME/Library/WebKit/$(BUNDLE_ID)"
 	-@rm -rf "$$HOME/Library/Caches/$(BUNDLE_ID)"
 	-@rm -rf "$$HOME/Library/Application Support/$(BUNDLE_ID)"
 	-@rm -rf "$$HOME/Library/Saved Application State/$(BUNDLE_ID).savedState"
 	-@defaults delete $(BUNDLE_ID) 2>/dev/null || true
-	@echo "App state cleared."
+	@echo "All app state cleared."
 
 build:
 	cargo build -p mdlive --release

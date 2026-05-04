@@ -134,17 +134,21 @@ async fn test_workspace_switch_then_serves_files() {
         .await;
     switch.assert_status_ok();
 
-    // root should now serve the file instead of picker
+    // root should render landing (tree shown, picker gone) without auto-opening a file
     let root = server.get("/").await;
     root.assert_status_ok();
     let body = root.text();
     assert!(
-        body.contains("Project readme"),
-        "should render the workspace file"
+        body.contains("readme.md"),
+        "tree should list the workspace file"
     );
     assert!(
         !body.contains("pickerPageInput"),
         "should not show picker when workspace is loaded"
+    );
+    assert!(
+        body.contains("landing-page"),
+        "directory mode should land on welcome state, not auto-open a file"
     );
 }
 
@@ -205,11 +209,12 @@ async fn test_workspace_double_switch() {
         .await
         .assert_status_ok();
 
-    // root should serve dir2 content
+    // root should render the dir2 landing page (tree lists b.md, not a.md)
     let root = server.get("/").await;
     let body = root.text();
-    assert!(body.contains("Dir 2"));
-    assert!(!body.contains("Dir 1"));
+    assert!(body.contains("b.md"));
+    assert!(!body.contains("a.md"));
+    assert!(body.contains("landing-page"));
 
     // current workspace should point to dir2
     let current = server.get("/api/workspace/current").await;

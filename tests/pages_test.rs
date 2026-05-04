@@ -921,3 +921,105 @@ async fn test_content_width_single_file_uses_css_variable() {
         ".page-container should not use a hardcoded width: 75%"
     );
 }
+
+// --- landing page (no auto-open) tests ---
+
+#[tokio::test]
+async fn test_directory_root_renders_landing_page() {
+    let (server, _dir) = create_directory_server().await;
+
+    let response = server.get("/").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    assert!(
+        body.contains("class=\"landing-page\""),
+        "directory mode root should render landing-page div, not auto-open a file"
+    );
+    assert!(
+        body.contains("Pick a file to get started"),
+        "landing copy should be present"
+    );
+    // tree should still be rendered with all known files
+    assert!(body.contains("test1.md"), "tree should list test1.md");
+    assert!(
+        body.contains("test2.markdown"),
+        "tree should list test2.markdown"
+    );
+    assert!(body.contains("test3.md"), "tree should list test3.md");
+}
+
+#[tokio::test]
+async fn test_directory_root_does_not_render_first_file_content() {
+    let (server, _dir) = create_directory_server().await;
+
+    let response = server.get("/").await;
+    let body = response.text();
+
+    // landing must not include the rendered HTML of any file
+    assert!(
+        !body.contains("Content of test1"),
+        "landing should not include first file's content"
+    );
+    assert!(
+        !body.contains("Content of test2"),
+        "landing should not include second file's content"
+    );
+}
+
+#[tokio::test]
+async fn test_directory_root_landing_marks_default_file() {
+    // restoration JS keys off currentFile being empty -- assert the template
+    // variables expose that signal so the JS resume path can fire.
+    let (server, _dir) = create_directory_server().await;
+
+    let response = server.get("/").await;
+    let body = response.text();
+
+    assert!(
+        body.contains("var currentFile = \"\";"),
+        "landing should expose empty currentFile for resume JS"
+    );
+    assert!(
+        body.contains("var showNavigation = true;"),
+        "landing should still show navigation"
+    );
+}
+
+#[tokio::test]
+async fn test_directory_file_path_still_renders_file() {
+    // landing only applies to root -- explicit file URLs should still render
+    let (server, _dir) = create_directory_server().await;
+
+    let response = server.get("/test1.md").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    assert!(
+        body.contains("Content of test1"),
+        "explicit file URL should still render file content"
+    );
+    assert!(
+        !body.contains("Pick a file to get started"),
+        "explicit file URL should not show landing copy"
+    );
+}
+
+#[tokio::test]
+async fn test_single_file_root_still_serves_file() {
+    // single-file mode is unchanged -- root should serve the file, not landing
+    let (server, _, _dir) = create_test_server("# Solo\n\nSingle file content").await;
+
+    let response = server.get("/").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    assert!(
+        body.contains("Single file content"),
+        "single-file mode root should serve the file"
+    );
+    assert!(
+        !body.contains("Pick a file to get started"),
+        "single-file mode should not show landing copy"
+    );
+}

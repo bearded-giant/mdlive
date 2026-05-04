@@ -29,6 +29,10 @@ pub(crate) async fn serve_html_root(State(state): State<SharedMarkdownState>) ->
         return render_workspace_picker(&state);
     }
 
+    if state.is_directory_mode {
+        return render_empty_landing(&state);
+    }
+
     let filename = match state.get_sorted_filenames().into_iter().next() {
         Some(name) => name,
         None => {
@@ -45,6 +49,53 @@ pub(crate) async fn serve_html_root(State(state): State<SharedMarkdownState>) ->
     let _ = state.refresh_file(&filename);
 
     render_file_with_default_flag(&state, &filename, true).await
+}
+
+fn render_empty_landing(state: &MarkdownState) -> (StatusCode, Html<String>) {
+    let env = template_env();
+    let template = match env.get_template(TEMPLATE_NAME) {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html(format!("Template error: {e}")),
+            );
+        }
+    };
+
+    let file_infos = state.get_file_infos();
+    let dir_paths = crate::util::scan_directories(&state.base_dir);
+    let tree = build_file_tree(&file_infos, &dir_paths);
+
+    let saved_tabs = crate::handlers::api::read_workspace_tabs(&state.base_dir);
+
+    let content = Value::from_safe_string(
+        "<div class=\"landing-page\">\
+         <h2>Pick a file to get started</h2>\
+         <p>Select a file from the sidebar, or press <code>n</code> to create a new one.</p>\
+         </div>"
+            .to_string(),
+    );
+
+    match template.render(context! {
+        content => content,
+        file_type => "markdown",
+        show_navigation => true,
+        has_history => false,
+        tree => tree,
+        current_file => "",
+        base_dir => state.base_dir.display().to_string(),
+        daemon_mode => state.daemon_mode,
+        is_default_file => true,
+        is_landing => true,
+        saved_tabs => serde_json::to_value(&saved_tabs).unwrap_or(serde_json::Value::Null),
+    }) {
+        Ok(r) => (StatusCode::OK, Html(r)),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Html(format!("Rendering error: {e}")),
+        ),
+    }
 }
 
 pub(crate) async fn serve_file(
@@ -149,6 +200,13 @@ async fn render_file_with_default_flag(
 
     let has_history = state.mdlive_dir.is_some();
 
+    let saved_tabs = if state.show_navigation() {
+        crate::handlers::api::read_workspace_tabs(&state.base_dir)
+    } else {
+        crate::handlers::api::WorkspaceTabsState::default()
+    };
+    let saved_tabs_value = serde_json::to_value(&saved_tabs).unwrap_or(serde_json::Value::Null);
+
     let rendered = if state.show_navigation() {
         let file_infos = state.get_file_infos();
         let dir_paths = crate::util::scan_directories(&state.base_dir);
@@ -166,6 +224,7 @@ async fn render_file_with_default_flag(
             base_dir => state.base_dir.display().to_string(),
             daemon_mode => state.daemon_mode,
             is_default_file => is_default_file,
+            saved_tabs => saved_tabs_value,
         }) {
             Ok(r) => r,
             Err(e) => {
@@ -269,6 +328,13 @@ fn render_editor(
         0
     };
 
+    let saved_tabs_value = if state.show_navigation() {
+        serde_json::to_value(crate::handlers::api::read_workspace_tabs(&state.base_dir))
+            .unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::Value::Null
+    };
+
     let rendered = if state.show_navigation() {
         let file_infos = state.get_file_infos();
         let dir_paths = crate::util::scan_directories(&state.base_dir);
@@ -286,6 +352,7 @@ fn render_editor(
             tree => tree,
             base_dir => state.base_dir.display().to_string(),
             daemon_mode => state.daemon_mode,
+            saved_tabs => saved_tabs_value,
         }) {
             Ok(r) => r,
             Err(e) => {

@@ -342,3 +342,73 @@ async fn test_temp_file_rename_triggers_reload_directory_mode() {
     assert!(final_body.contains("Updated via temp file rename"));
     assert!(!final_body.contains("Content of test1"));
 }
+
+// --- deferred-remove watcher tests ---
+
+const DEFERRED_REMOVE_WAIT_MS: u64 = 800; // > 500ms grace period
+
+#[tokio::test]
+async fn test_external_delete_untracks_file_after_grace_period() {
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let _ws = server.get_websocket("/ws").await.into_websocket().await;
+
+    let target = temp_dir.path().join("test1.md");
+    fs::remove_file(&target).expect("failed to delete test1.md");
+
+    // wait past the watcher's deferred-remove grace period
+    tokio::time::sleep(Duration::from_millis(DEFERRED_REMOVE_WAIT_MS)).await;
+
+    // tree (rendered on any page) should no longer list the deleted file
+    let response = server.get("/test2.markdown").await;
+    assert_eq!(response.status_code(), 200);
+    let body = response.text();
+
+    assert!(
+        !body.contains("\"/test1.md\""),
+        "deleted file should be removed from tree links after grace period"
+    );
+    assert!(
+        body.contains("test2.markdown"),
+        "remaining files should still be tracked"
+    );
+
+    // direct file URL should now 404 because tracked entry was dropped
+    let gone = server.get("/test1.md").await;
+    assert_eq!(
+        gone.status_code(),
+        404,
+        "deleted file should 404 after grace period"
+    );
+}
+
+#[tokio::test]
+async fn test_atomic_save_does_not_untrack_file() {
+    // editors like neovim save by deleting then recreating. the deferred-remove
+    // grace period must not untrack a file that gets recreated quickly.
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let _ws = server.get_websocket("/ws").await.into_websocket().await;
+
+    let target = temp_dir.path().join("test1.md");
+    fs::remove_file(&target).expect("failed to delete test1.md");
+
+    // recreate well within the 500ms grace period
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    fs::write(&target, "# Test 1 (rewritten)\n\nNew body").expect("failed to recreate test1.md");
+
+    // wait long enough that the deferred-remove would have fired had the file stayed gone
+    tokio::time::sleep(Duration::from_millis(DEFERRED_REMOVE_WAIT_MS)).await;
+
+    let response = server.get("/test1.md").await;
+    assert_eq!(
+        response.status_code(),
+        200,
+        "atomic-save pattern should leave file tracked"
+    );
+    let body = response.text();
+    assert!(
+        body.contains("rewritten") || body.contains("New body"),
+        "served content should reflect the recreated file"
+    );
+}

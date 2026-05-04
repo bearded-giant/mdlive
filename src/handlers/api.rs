@@ -803,3 +803,88 @@ pub(crate) async fn api_create_directory(
         }),
     ))
 }
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct WorkspaceTabsState {
+    #[serde(default)]
+    pub tabs: Vec<TabEntry>,
+    #[serde(default)]
+    pub active: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TabEntry {
+    pub path: String,
+    #[serde(default = "default_tab_mode")]
+    pub mode: String,
+}
+
+fn default_tab_mode() -> String {
+    "view".to_string()
+}
+
+fn tabs_path(base_dir: &Path) -> PathBuf {
+    base_dir.join(".mdlive").join("tabs.json")
+}
+
+pub fn read_workspace_tabs(base_dir: &Path) -> WorkspaceTabsState {
+    let path = tabs_path(base_dir);
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub(crate) async fn api_get_workspace_tabs(
+    State(state): State<SharedMarkdownState>,
+) -> Json<WorkspaceTabsState> {
+    let state = state.lock().await;
+    Json(read_workspace_tabs(&state.base_dir))
+}
+
+pub(crate) async fn api_save_workspace_tabs(
+    State(state): State<SharedMarkdownState>,
+    Json(body): Json<WorkspaceTabsState>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    let state = state.lock().await;
+    let dir = state.base_dir.join(".mdlive");
+    if let Err(e) = fs::create_dir_all(&dir) {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse {
+                success: false,
+                error: Some(format!("failed to create .mdlive: {e}")),
+                path: None,
+            }),
+        ));
+    }
+    let path = dir.join("tabs.json");
+    let payload = match serde_json::to_string_pretty(&body) {
+        Ok(s) => s,
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse {
+                    success: false,
+                    error: Some(format!("serialize tabs: {e}")),
+                    path: None,
+                }),
+            ));
+        }
+    };
+    if let Err(e) = fs::write(&path, payload) {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse {
+                success: false,
+                error: Some(format!("write tabs: {e}")),
+                path: None,
+            }),
+        ));
+    }
+    Ok(Json(ApiResponse {
+        success: true,
+        error: None,
+        path: None,
+    }))
+}

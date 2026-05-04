@@ -49,7 +49,11 @@ pub(crate) async fn handle_file_event(event: Event, state: &SharedMarkdownState)
                         handle_file_change(new_path, state).await;
                     }
                 }
-                RenameMode::From => {}
+                RenameMode::From => {
+                    if let Some(path) = event.paths.first() {
+                        schedule_deferred_remove(path.to_path_buf(), state.clone());
+                    }
+                }
                 RenameMode::To => {
                     if let Some(path) = event.paths.first() {
                         handle_file_change(path, state).await;
@@ -74,9 +78,10 @@ pub(crate) async fn handle_file_event(event: Event, state: &SharedMarkdownState)
                             handle_file_change(path, state).await;
                         }
                         notify::EventKind::Remove(_) => {
-                            // don't remove files from tracking -- editors like neovim save by
-                            // renaming to a backup then creating a new file. removing here
-                            // would cause transient 404s.
+                            // editors like neovim save by renaming to a backup then creating
+                            // a new file -- defer removal so atomic-save patterns don't
+                            // untrack a still-live file.
+                            schedule_deferred_remove(path.to_path_buf(), state.clone());
                         }
                         _ => {}
                     }
@@ -94,6 +99,24 @@ pub(crate) async fn handle_file_event(event: Event, state: &SharedMarkdownState)
             }
         }
     }
+}
+
+fn schedule_deferred_remove(path: std::path::PathBuf, state: SharedMarkdownState) {
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if path.exists() {
+            return;
+        }
+        let mut state_guard = state.lock().await;
+        let key = path
+            .strip_prefix(&state_guard.base_dir)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        if state_guard.remove_tracked_file(&key) {
+            let _ = state_guard.change_tx.send(ServerMessage::Reload);
+        }
+    });
 }
 
 async fn handle_file_change(path: &Path, state: &SharedMarkdownState) {

@@ -125,6 +125,10 @@ fn build_routes(state: Arc<Mutex<MarkdownState>>) -> Router {
             "/api/workspace/browse",
             get(handlers::workspace::api_workspace_browse),
         )
+        .route(
+            "/api/workspace/tabs",
+            get(handlers::api::api_get_workspace_tabs).post(handlers::api::api_save_workspace_tabs),
+        )
         .route("/open", get(handlers::workspace::open_and_redirect))
         .route("/edit/*filepath", get(handlers::pages::serve_editor))
         .route("/*filepath", get(handlers::pages::serve_file))
