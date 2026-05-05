@@ -6100,8 +6100,7 @@
                   }
               });
           }
-          var remembered = localStorage.getItem('mdlive_browse_last_path');
-          var initial = startPath && startPath !== '~' ? startPath : (remembered || startPath || '~');
+          var initial = startPath && startPath !== '~' ? startPath : '';
           browseSetRoot(initial);
       }
 
@@ -6134,7 +6133,8 @@
 
           listEl.innerHTML = '<li style="padding:16px;text-align:center;opacity:0.5;font-size:13px">Loading...</li>';
 
-          fetch('/api/workspace/browse?path=' + encodeURIComponent(path))
+          var browseUrl = path ? '/api/workspace/browse?path=' + encodeURIComponent(path) : '/api/workspace/browse';
+          fetch(browseUrl)
               .then(function(r) { return r.json(); })
               .then(function(data) {
                   if (!data.success) {
@@ -6144,7 +6144,6 @@
                   _browseCurrentPath = data.path;
                   _browseTreeRoot = data.path;
                   pathInput.value = data.path;
-                  localStorage.setItem('mdlive_browse_last_path', data.path);
 
                   upBtn.disabled = !data.parent;
                   upBtn.onclick = data.parent ? function() { browseSetRoot(data.parent); } : null;

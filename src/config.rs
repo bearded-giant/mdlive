@@ -20,6 +20,8 @@ pub struct AppConfig {
     pub recent: Vec<RecentWorkspace>,
     #[serde(default)]
     pub last_workspaces: Vec<String>,
+    #[serde(default)]
+    pub last_browse_dir: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -28,6 +30,7 @@ impl Default for AppConfig {
             file_path: default_config_path(),
             recent: Vec::new(),
             last_workspaces: Vec::new(),
+            last_browse_dir: None,
         }
     }
 }
@@ -63,6 +66,16 @@ impl AppConfig {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+
+        let browse_dir = if mode == "directory" {
+            path.clone()
+        } else {
+            std::path::Path::new(&path)
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| path.clone())
+        };
+        self.last_browse_dir = Some(browse_dir);
 
         self.recent.insert(
             0,

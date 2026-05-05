@@ -8,11 +8,14 @@ use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::Manager;
 
 #[cfg(target_os = "macos")]
-fn pick_file_or_folder(extensions: &[&str]) -> Option<PathBuf> {
+fn pick_file_or_folder(
+    extensions: &[&str],
+    start_dir: Option<&std::path::Path>,
+) -> Option<PathBuf> {
     use objc2::rc::Retained;
     use objc2::MainThreadMarker;
     use objc2_app_kit::NSOpenPanel;
-    use objc2_foundation::NSString;
+    use objc2_foundation::{NSString, NSURL};
 
     let mtm = unsafe { MainThreadMarker::new_unchecked() };
 
@@ -21,6 +24,14 @@ fn pick_file_or_folder(extensions: &[&str]) -> Option<PathBuf> {
     panel.setCanChooseDirectories(true);
     panel.setAllowsMultipleSelection(false);
     panel.setResolvesAliases(true);
+
+    if let Some(dir) = start_dir {
+        if dir.is_dir() {
+            let path_str = NSString::from_str(&dir.display().to_string());
+            let url = NSURL::fileURLWithPath(&path_str);
+            panel.setDirectoryURL(Some(&url));
+        }
+    }
 
     let ext_strings: Vec<Retained<NSString>> =
         extensions.iter().map(|e| NSString::from_str(e)).collect();
@@ -40,8 +51,17 @@ fn pick_file_or_folder(extensions: &[&str]) -> Option<PathBuf> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn pick_file_or_folder(_extensions: &[&str]) -> Option<PathBuf> {
-    rfd::FileDialog::new().pick_folder()
+fn pick_file_or_folder(
+    _extensions: &[&str],
+    start_dir: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(dir) = start_dir {
+        if dir.is_dir() {
+            dialog = dialog.set_directory(dir);
+        }
+    }
+    dialog.pick_folder()
 }
 
 static SERVER_PORT: OnceLock<u16> = OnceLock::new();
@@ -498,7 +518,25 @@ pub fn run() {
                 let id = event.id().as_ref().to_string();
 
                 if id == "open" {
-                    let picked = pick_file_or_folder(&["md", "markdown", "txt", "json"]);
+                    let start = AppConfig::load()
+                        .last_browse_dir
+                        .map(PathBuf::from);
+                    let picked = pick_file_or_folder(
+                        &["md", "markdown", "txt", "json"],
+                        start.as_deref(),
+                    );
+                    if let Some(ref path) = picked {
+                        let mut config = AppConfig::load();
+                        let dir = if path.is_dir() {
+                            path.display().to_string()
+                        } else {
+                            path.parent()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_default()
+                        };
+                        config.last_browse_dir = Some(dir);
+                        let _ = config.save();
+                    }
                     if let Some(path) = picked {
                         open_path_in_window(app_handle, path);
                     }

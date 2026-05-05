@@ -252,10 +252,19 @@ pub(crate) struct BrowseResponse {
 pub(crate) async fn api_workspace_browse(
     Query(params): Query<BrowseQuery>,
 ) -> Json<BrowseResponse> {
+    let config = crate::AppConfig::load();
     let target = params
         .path
+        .filter(|p| !p.trim().is_empty())
         .map(|p| expand_path(&p))
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")));
+        .unwrap_or_else(|| {
+            config
+                .last_browse_dir
+                .as_ref()
+                .map(|d| PathBuf::from(d))
+                .filter(|p| p.is_dir())
+                .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
+        });
 
     let target = if target.is_file() {
         target.parent().unwrap_or(&target).to_path_buf()
@@ -265,6 +274,12 @@ pub(crate) async fn api_workspace_browse(
 
     let display = target.display().to_string();
     let parent = target.parent().map(|p| p.display().to_string());
+
+    {
+        let mut config = crate::AppConfig::load();
+        config.last_browse_dir = Some(display.clone());
+        let _ = config.save();
+    }
 
     let entries = match std::fs::read_dir(&target) {
         Ok(rd) => {
