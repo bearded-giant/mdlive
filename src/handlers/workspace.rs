@@ -230,6 +230,10 @@ pub(crate) async fn api_workspace_recent(
 pub(crate) struct BrowseQuery {
     #[serde(default)]
     path: Option<String>,
+    #[serde(default)]
+    show_hidden: Option<bool>,
+    #[serde(default)]
+    sort: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -237,6 +241,8 @@ pub(crate) struct BrowseEntry {
     name: String,
     path: String,
     is_dir: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -281,13 +287,16 @@ pub(crate) async fn api_workspace_browse(
         let _ = config.save();
     }
 
+    let show_hidden = params.show_hidden.unwrap_or(false);
+    let sort_mode = params.sort.as_deref().unwrap_or("name");
+
     let entries = match std::fs::read_dir(&target) {
         Ok(rd) => {
             let mut items: Vec<BrowseEntry> = rd
                 .filter_map(|e| e.ok())
                 .filter_map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') {
+                    if !show_hidden && name.starts_with('.') {
                         return None;
                     }
                     let ft = e.file_type().ok()?;
@@ -300,18 +309,36 @@ pub(crate) async fn api_workspace_browse(
                     } else {
                         return None;
                     }
+                    let modified = e
+                        .metadata()
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs());
                     Some(BrowseEntry {
                         path: e.path().display().to_string(),
                         is_dir: ft.is_dir(),
                         name,
+                        modified,
                     })
                 })
                 .collect();
-            items.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            });
+            match sort_mode {
+                "modified" => {
+                    items.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => b.modified.unwrap_or(0).cmp(&a.modified.unwrap_or(0)),
+                    });
+                }
+                _ => {
+                    items.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                    });
+                }
+            }
             items
         }
         Err(e) => {

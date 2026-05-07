@@ -592,15 +592,47 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
-            tauri::RunEvent::ExitRequested { .. } => {
-                APP_QUITTING.store(true, Ordering::SeqCst);
-                persist_workspaces();
+            tauri::RunEvent::ExitRequested {
+                api,
+                code,
+                ..
+            } => {
+                if code.is_none() {
+                    // last window closed — keep app alive (macOS convention)
+                    api.prevent_exit();
+                } else {
+                    // explicit quit (Cmd+Q or process signal)
+                    APP_QUITTING.store(true, Ordering::SeqCst);
+                    persist_workspaces();
+                }
             }
             tauri::RunEvent::WindowEvent { label, event, .. } => {
                 if matches!(event, tauri::WindowEvent::Destroyed)
                     && !APP_QUITTING.load(Ordering::SeqCst)
                 {
                     unregister_window_path(&label);
+                }
+            }
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } => {
+                if !has_visible_windows {
+                    let port = SERVER_PORT.get().copied().unwrap_or(mdlive::DEFAULT_PORT);
+                    let url = format!("http://127.0.0.1:{port}");
+                    let _ = tauri::WebviewWindowBuilder::new(
+                        app_handle,
+                        format!("main-{}", std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis()),
+                        tauri::WebviewUrl::External(url.parse().unwrap()),
+                    )
+                    .title("mdlive")
+                    .inner_size(1500.0, 1000.0)
+                    .min_inner_size(600.0, 400.0)
+                    .build();
                 }
             }
             tauri::RunEvent::Opened { urls } => {

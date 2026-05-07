@@ -287,6 +287,30 @@
           display: none;
       }
 
+      .file-tree-parent {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          margin: 0 0 4px 0;
+          cursor: pointer;
+          font-family: var(--code-font);
+          font-size: 13px;
+          color: var(--blockquote-color);
+          border-radius: 4px;
+          transition: color 0.15s, background 0.15s;
+          user-select: none;
+      }
+
+      .file-tree-parent:hover {
+          color: var(--text-color);
+          background: var(--code-bg);
+      }
+
+      body.sidebar-collapsed .file-tree-parent {
+          display: none;
+      }
+
       .sidebar-content {
           padding: 0 20px 20px 20px;
           opacity: 1;
@@ -1575,6 +1599,56 @@
           font-style: italic;
           cursor: default;
       }
+      .browse-modal-controls {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 6px 16px;
+          border-bottom: 1px solid var(--border-color);
+          background: var(--code-bg);
+          flex-shrink: 0;
+          font-size: 12px;
+          color: var(--blockquote-color);
+      }
+      .browse-modal-controls label {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          cursor: pointer;
+          user-select: none;
+      }
+      .browse-modal-controls label:hover {
+          color: var(--text-color);
+      }
+      .browse-modal-controls input[type="checkbox"] {
+          margin: 0;
+          cursor: pointer;
+      }
+      .browse-sort-btn {
+          background: none;
+          border: 1px solid var(--border-color-light);
+          border-radius: 4px;
+          padding: 2px 8px;
+          font-size: 12px;
+          cursor: pointer;
+          color: var(--blockquote-color);
+          font-family: var(--code-font);
+      }
+      .browse-sort-btn:hover {
+          color: var(--text-color);
+          background: var(--border-color);
+      }
+      .browse-sort-btn.active {
+          color: var(--link-color);
+          border-color: var(--link-color);
+      }
+      .browse-modal-item-time {
+          margin-left: auto;
+          flex-shrink: 0;
+          font-size: 11px;
+          color: var(--blockquote-color);
+          padding-right: 16px;
+      }
       .browse-modal-footer {
           display: flex;
           align-items: center;
@@ -2759,13 +2833,14 @@
         var select = document.getElementById("sidebarSort");
         if (!select) return;
 
-        var saved = localStorage.getItem("sidebar-sort") || "name-asc";
+        var sortKey = baseDir ? 'mdlive-sort:' + baseDir : 'sidebar-sort';
+        var saved = localStorage.getItem(sortKey) || "name-asc";
         select.value = saved;
         applySortMode(saved);
 
         select.addEventListener("change", function () {
           var mode = this.value;
-          localStorage.setItem("sidebar-sort", mode);
+          localStorage.setItem(sortKey, mode);
           applySortMode(mode);
         });
       }
@@ -2834,6 +2909,31 @@
         var el = li.querySelector(":scope > a, :scope > details");
         if (!el) return 0;
         return parseInt(el.getAttribute("data-" + field), 10) || 0;
+      }
+
+      function initSidebarNav() {
+        var el = document.getElementById('fileTreeParent');
+        if (!el || !baseDir) return;
+        var parts = baseDir.split('/').filter(Boolean);
+        if (parts.length <= 1) {
+            el.style.display = 'none';
+            return;
+        }
+        el.addEventListener('click', function() {
+            var parent = baseDir.substring(0, baseDir.lastIndexOf('/')) || '/';
+            fetch('/api/workspace/switch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: parent })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    fetch('/api/session/persist', { method: 'POST' }).catch(function() {});
+                    window.location.href = '/';
+                }
+            });
+        });
       }
 
       function formatRelativeTime(epoch) {
@@ -3430,6 +3530,7 @@
         initTreeState();
         initSidebarSearch();
         initSidebarSort();
+        initSidebarNav();
         if (typeof hljs !== "undefined") {
           hljs.highlightAll();
         }
@@ -3595,6 +3696,7 @@
         </select>
       </div>
       <div class="sidebar-content">
+        <div class="file-tree-parent" id="fileTreeParent" title="Open parent directory">..</div>
         <ul class="file-tree sort-by-name">
           {% for item in tree recursive %}
           <li>
@@ -4805,7 +4907,7 @@
                   var sidebarLink = document.querySelector('.file-tree a[href="/' + path + '"]');
                   if (sidebarLink) {
                       sidebarLink.setAttribute('data-modified', nowEpoch);
-                      var sortMode = localStorage.getItem('sidebar-sort') || 'name-asc';
+                      var sortMode = localStorage.getItem(baseDir ? 'mdlive-sort:' + baseDir : 'sidebar-sort') || 'name-asc';
                       applySortMode(sortMode);
                   }
 
@@ -5642,6 +5744,11 @@
           <button class="browse-modal-up" id="browseUp" title="Parent directory">&#8593;</button>
           <input type="text" class="browse-modal-path" id="browsePath" spellcheck="false" autocomplete="off" />
         </div>
+        <div class="browse-modal-controls">
+          <button class="browse-sort-btn active" id="browseSortName" onclick="browseSortBy('name')">Name</button>
+          <button class="browse-sort-btn" id="browseSortModified" onclick="browseSortBy('modified')">Modified</button>
+          <label style="margin-left:auto"><input type="checkbox" id="browseShowHidden" onchange="browseToggleHidden()"> Hidden</label>
+        </div>
         <ul class="browse-modal-list" id="browseList"></ul>
         <div class="browse-modal-footer">
           <button class="browse-modal-btn" onclick="closeBrowseModal()">Cancel</button>
@@ -6078,6 +6185,86 @@
       var _browseSelectedFile = null;
       var _browseTreeCache = {};
       var _browseTreeRoot = '';
+      var _browseSortMode = localStorage.getItem('mdlive_browse_sort') || 'name';
+      var _browseShowHidden = localStorage.getItem('mdlive_browse_hidden') === 'true';
+
+      function browseRelativeTime(epoch) {
+          if (!epoch) return '';
+          var now = Date.now() / 1000;
+          var diff = now - epoch;
+          if (diff < 60) return 'just now';
+          if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+          if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+          if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+          if (diff < 2592000) return Math.floor(diff / 604800) + 'w ago';
+          var d = new Date(epoch * 1000);
+          return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      }
+
+      function browseBuildUrl(path) {
+          var params = [];
+          if (path) params.push('path=' + encodeURIComponent(path));
+          if (_browseShowHidden) params.push('show_hidden=true');
+          if (_browseSortMode !== 'name') params.push('sort=' + _browseSortMode);
+          return '/api/workspace/browse' + (params.length ? '?' + params.join('&') : '');
+      }
+
+      function browseGetExpandedDirs() {
+          var dirs = [];
+          for (var key in _browseTreeCache) {
+              if (_browseTreeCache[key].expanded && key !== _browseTreeRoot) dirs.push(key);
+          }
+          return dirs;
+      }
+
+      function browseRefetchExpanded(expandedDirs) {
+          if (expandedDirs.length === 0) { browseRenderTree(); return; }
+          var remaining = expandedDirs.length;
+          expandedDirs.forEach(function(dir) {
+              fetch(browseBuildUrl(dir))
+                  .then(function(r) { return r.json(); })
+                  .then(function(data) {
+                      if (data.success) {
+                          _browseTreeCache[dir] = { entries: data.entries, expanded: true };
+                      } else {
+                          delete _browseTreeCache[dir];
+                      }
+                  })
+                  .catch(function() { delete _browseTreeCache[dir]; })
+                  .finally(function() {
+                      remaining--;
+                      if (remaining === 0) browseRenderTree();
+                  });
+          });
+      }
+
+      function browseSortBy(mode) {
+          _browseSortMode = mode;
+          localStorage.setItem('mdlive_browse_sort', mode);
+          document.getElementById('browseSortName').classList.toggle('active', mode === 'name');
+          document.getElementById('browseSortModified').classList.toggle('active', mode === 'modified');
+          browseRefresh();
+      }
+
+      function browseToggleHidden() {
+          _browseShowHidden = document.getElementById('browseShowHidden').checked;
+          localStorage.setItem('mdlive_browse_hidden', _browseShowHidden);
+          browseRefresh();
+      }
+
+      function browseRefresh() {
+          if (!_browseCurrentPath) return;
+          var expandedDirs = browseGetExpandedDirs();
+          fetch(browseBuildUrl(_browseCurrentPath))
+              .then(function(r) { return r.json(); })
+              .then(function(data) {
+                  if (!data.success) return;
+                  _browseTreeCache = {};
+                  _browseTreeCache[data.path] = { entries: data.entries, expanded: true };
+                  _browseTreeRoot = data.path;
+                  browseRefetchExpanded(expandedDirs);
+              });
+      }
 
       function openBrowseModal(startPath, onSelect) {
           _browseCallback = onSelect;
@@ -6085,6 +6272,12 @@
           _browseTreeCache = {};
           var modal = document.getElementById('browseModal');
           modal.classList.add('show');
+
+          var hiddenCb = document.getElementById('browseShowHidden');
+          if (hiddenCb) hiddenCb.checked = _browseShowHidden;
+          document.getElementById('browseSortName').classList.toggle('active', _browseSortMode === 'name');
+          document.getElementById('browseSortModified').classList.toggle('active', _browseSortMode === 'modified');
+
           var pathInput = document.getElementById('browsePath');
           if (!pathInput._bound) {
               pathInput._bound = true;
@@ -6092,7 +6285,7 @@
                   if (e.key === 'Enter') {
                       e.preventDefault();
                       var val = pathInput.value.trim();
-                      if (val) browseSetRoot(val);
+                      if (val) browseNavigateTo(val);
                   }
                   if (e.key === 'Escape') {
                       e.stopPropagation();
@@ -6101,7 +6294,7 @@
               });
           }
           var initial = startPath && startPath !== '~' ? startPath : '';
-          browseSetRoot(initial);
+          browseNavigateTo(initial);
       }
 
       function closeBrowseModal() {
@@ -6122,7 +6315,7 @@
           }
       }
 
-      function browseSetRoot(path) {
+      function browseNavigateTo(path, autoExpandChild) {
           var listEl = document.getElementById('browseList');
           var pathInput = document.getElementById('browsePath');
           var upBtn = document.getElementById('browseUp');
@@ -6133,8 +6326,7 @@
 
           listEl.innerHTML = '<li style="padding:16px;text-align:center;opacity:0.5;font-size:13px">Loading...</li>';
 
-          var browseUrl = path ? '/api/workspace/browse?path=' + encodeURIComponent(path) : '/api/workspace/browse';
-          fetch(browseUrl)
+          fetch(browseBuildUrl(path))
               .then(function(r) { return r.json(); })
               .then(function(data) {
                   if (!data.success) {
@@ -6146,15 +6338,23 @@
                   pathInput.value = data.path;
 
                   upBtn.disabled = !data.parent;
-                  upBtn.onclick = data.parent ? function() { browseSetRoot(data.parent); } : null;
+                  upBtn.onclick = data.parent ? function() { browseNavigateTo(data.parent, data.path); } : null;
 
                   _browseTreeCache[data.path] = { entries: data.entries, expanded: true };
-                  browseRenderTree();
+
+                  if (autoExpandChild) {
+                      _browseScrollTarget = autoExpandChild;
+                      browseToggleDir(autoExpandChild);
+                  } else {
+                      browseRenderTree();
+                  }
               })
               .catch(function() {
                   listEl.innerHTML = '<li style="padding:16px;color:#e74c3c;font-size:13px">Network error</li>';
               });
       }
+
+      var _browseScrollTarget = null;
 
       function browseRenderTree() {
           var listEl = document.getElementById('browseList');
@@ -6166,6 +6366,12 @@
               return;
           }
           browseRenderLevel(listEl, _browseTreeRoot, 0);
+
+          if (_browseScrollTarget) {
+              var target = document.querySelector('[data-browse-path="' + CSS.escape(_browseScrollTarget) + '"]');
+              if (target) target.scrollIntoView({ block: 'center' });
+              _browseScrollTarget = null;
+          }
       }
 
       function browseRenderLevel(container, dirPath, depth) {
@@ -6176,6 +6382,7 @@
               var li = document.createElement('li');
               li.className = 'browse-modal-item';
               li.style.paddingLeft = (depth * 20 + 16) + 'px';
+              li.setAttribute('data-browse-path', entry.path);
 
               if (_browseSelectedFile === entry.path) {
                   li.classList.add('selected');
@@ -6203,6 +6410,13 @@
                   nameEl.textContent = entry.name;
                   li.appendChild(nameEl);
 
+                  if (entry.modified) {
+                      var timeEl = document.createElement('span');
+                      timeEl.className = 'browse-modal-item-time';
+                      timeEl.textContent = browseRelativeTime(entry.modified);
+                      li.appendChild(timeEl);
+                  }
+
                   li.onclick = function(e) {
                       if (e.target === arrow) return;
                       browseSelectItem(entry);
@@ -6225,6 +6439,13 @@
                   nameEl.className = 'browse-modal-item-name';
                   nameEl.textContent = entry.name;
                   li.appendChild(nameEl);
+
+                  if (entry.modified) {
+                      var timeEl = document.createElement('span');
+                      timeEl.className = 'browse-modal-item-time';
+                      timeEl.textContent = browseRelativeTime(entry.modified);
+                      li.appendChild(timeEl);
+                  }
 
                   li.onclick = function() { browseSelectItem(entry); };
                   li.ondblclick = function() {
@@ -6266,7 +6487,7 @@
               _browseTreeCache[dirPath] = { entries: [], expanded: true, loading: true };
               browseRenderTree();
 
-              fetch('/api/workspace/browse?path=' + encodeURIComponent(dirPath))
+              fetch(browseBuildUrl(dirPath))
                   .then(function(r) { return r.json(); })
                   .then(function(data) {
                       if (!data.success) {
