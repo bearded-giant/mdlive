@@ -165,16 +165,18 @@ fn find_existing_server() -> Option<u16> {
         if port != mdlive::DEFAULT_PORT && check_mdlive_server(port) {
             return Some(port);
         }
+        // stale port file — previous instance crashed without cleanup
+        mdlive::delete_daemon_port();
     }
     None
 }
 
 fn start_server_for_path(path: &std::path::Path) -> Result<u16, String> {
     let rt = RT_HANDLE.get().ok_or("runtime not initialized")?;
-    // enter the runtime context so tokio::spawn works in new_router/start_watcher
     let _guard = rt.enter();
 
     let path = path.canonicalize().map_err(|e| e.to_string())?;
+    eprintln!("[mdlive] opening workspace: {}", path.display());
 
     let (base_dir, tracked_files, is_dir_mode) = if path.is_file() {
         let base = path
@@ -192,16 +194,21 @@ fn start_server_for_path(path: &std::path::Path) -> Result<u16, String> {
         return Err("path is not a file or directory".into());
     };
 
+    eprintln!("[mdlive] building router ({} files)...", tracked_files.len());
     let router =
         mdlive::new_router_with_config(base_dir, tracked_files, is_dir_mode, AppConfig::load())
             .map_err(|e| e.to_string())?;
 
+    eprintln!("[mdlive] binding port...");
     rt.block_on(async {
         let (listener, port) = mdlive::bind_with_port_increment("127.0.0.1", mdlive::DEFAULT_PORT)
             .await
             .map_err(|e| e.to_string())?;
+        eprintln!("[mdlive] workspace server on port {port}");
         tokio::spawn(async move {
-            axum::serve(listener, router).await.expect("server crashed");
+            if let Err(e) = axum::serve(listener, router).await {
+                eprintln!("[mdlive] workspace server error: {e}");
+            }
         });
         Ok(port)
     })
@@ -280,11 +287,12 @@ async fn handle_persist_session() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({"success": true}))
 }
 
-async fn start_server(window_tx: std::sync::mpsc::Sender<PathBuf>) -> u16 {
-    // reuse existing daemon if running
+async fn start_server(
+    window_tx: std::sync::mpsc::Sender<PathBuf>,
+) -> Result<u16, String> {
     if let Some(port) = find_existing_server() {
         eprintln!("Reusing existing mdlive server on port {port}");
-        return port;
+        return Ok(port);
     }
 
     let base_router = mdlive::new_daemon_router_with_config(AppConfig::load());
@@ -298,15 +306,17 @@ async fn start_server(window_tx: std::sync::mpsc::Sender<PathBuf>) -> u16 {
 
     let (listener, port) = mdlive::bind_with_port_increment("127.0.0.1", mdlive::DEFAULT_PORT)
         .await
-        .expect("failed to bind server");
+        .map_err(|e| format!("failed to bind server: {e}"))?;
 
     mdlive::write_daemon_port(port);
 
     tokio::spawn(async move {
-        axum::serve(listener, router).await.expect("server crashed");
+        if let Err(e) = axum::serve(listener, router).await {
+            eprintln!("server error: {e}");
+        }
     });
 
-    port
+    Ok(port)
 }
 
 #[tauri::command]
@@ -461,7 +471,18 @@ pub fn run() {
 
     let (window_tx, window_rx) = std::sync::mpsc::channel::<PathBuf>();
 
-    let port = rt.block_on(start_server(window_tx));
+    let port = match rt.block_on(start_server(window_tx)) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("fatal: {e}");
+            rfd::MessageDialog::new()
+                .set_title("mdlive")
+                .set_description(&format!("Could not start server:\n{e}"))
+                .set_level(rfd::MessageLevel::Error)
+                .show();
+            std::process::exit(1);
+        }
+    };
     SERVER_PORT.set(port).expect("port already set");
 
     // check for workspaces to restore from last session

@@ -346,14 +346,19 @@ impl MarkdownState {
     }
 
     pub(crate) fn markdown_to_html(content: &str) -> Result<String> {
-        let mut options = markdown::Options::gfm();
-        options.compile.allow_dangerous_html = true;
-        options.parse.constructs.frontmatter = true;
+        let content = content.to_string();
+        let result = std::panic::catch_unwind(|| {
+            let mut options = markdown::Options::gfm();
+            options.compile.allow_dangerous_html = true;
+            options.parse.constructs.frontmatter = true;
+            markdown::to_html_with_options(&content, &options)
+                .unwrap_or_else(|_| "Error parsing markdown".to_string())
+        });
 
-        let html_body = markdown::to_html_with_options(content, &options)
-            .unwrap_or_else(|_| "Error parsing markdown".to_string());
-
-        Ok(html_body)
+        match result {
+            Ok(html) => Ok(html),
+            Err(_) => Ok("<p><em>Could not render this file (markdown parser error)</em></p>".into()),
+        }
     }
 
     fn text_to_html(path: &Path, content: &str) -> String {

@@ -26,7 +26,9 @@ pub fn new_router(
     )?));
 
     let abort_handle = start_watcher(&base_dir, state.clone())?;
-    state.try_lock().unwrap().watcher_abort = Some(abort_handle);
+    if let Ok(mut s) = state.try_lock() {
+        s.watcher_abort = Some(abort_handle);
+    }
 
     Ok(build_routes(state))
 }
@@ -46,7 +48,9 @@ pub fn new_router_with_config(
     let state = Arc::new(Mutex::new(md_state));
 
     let abort_handle = start_watcher(&base_dir, state.clone())?;
-    state.try_lock().unwrap().watcher_abort = Some(abort_handle);
+    if let Ok(mut s) = state.try_lock() {
+        s.watcher_abort = Some(abort_handle);
+    }
 
     Ok(build_routes(state))
 }

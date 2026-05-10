@@ -36,7 +36,6 @@ minijinja-embed = { version = "2.12.0", default-features = false }
 strip = true
 lto = true
 codegen-units = 1
-panic = "abort"
 
 # keep backtraces, drop full DWARF symbols (~60% smaller debug target)
 [profile.dev]
