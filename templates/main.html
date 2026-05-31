@@ -3520,6 +3520,77 @@
         };
       }
 
+      // Per-file scroll memory: tab switches do a full page nav, so without this
+      // every open file snaps back to the top. Restore is gated to tab mode and
+      // only fires for files that have a stored position (i.e. already-open tabs).
+      var ScrollMemory = (function() {
+        var restoring = false;
+
+        // baseDir/currentFile/etc. are defined in a later <script> block, so this
+        // IIFE must not touch them at eval time -- only inside functions called
+        // from DOMContentLoaded, by which point those globals exist.
+        function enabled() { return showNavigation && !!currentFile; }
+        function mode() { return isEditorMode ? 'edit' : 'view'; }
+        function key() { return 'mdlive-scroll:' + baseDir + ':' + mode() + ':' + currentFile; }
+        function scrollEl() {
+          return isEditorMode
+            ? document.getElementById('editorTextarea')
+            : document.querySelector('.page-container');
+        }
+
+        function save() {
+          if (!enabled()) return;
+          var el = scrollEl();
+          if (!el) return;
+          try { sessionStorage.setItem(key(), String(el.scrollTop)); } catch(_) {}
+        }
+
+        function restore() {
+          if (!enabled()) return;
+          var el = scrollEl();
+          if (!el) return;
+          var raw;
+          try { raw = sessionStorage.getItem(key()); } catch(_) { return; }
+          if (raw === null) return;
+          var target = parseInt(raw, 10);
+          if (isNaN(target) || target <= 0) return;
+          // async content (mermaid, highlight.js) grows height after load, so
+          // reapply across frames until it sticks or we hit the cap.
+          restoring = true;
+          var frames = 0;
+          (function apply() {
+            if (!restoring) return;
+            el.scrollTop = target;
+            frames++;
+            if (Math.abs(el.scrollTop - target) > 1 && frames < 120) {
+              requestAnimationFrame(apply);
+            } else {
+              restoring = false;
+            }
+          })();
+        }
+
+        function init() {
+          if (!enabled()) return;
+          var el = scrollEl();
+          if (el) {
+            var pending = null;
+            el.addEventListener('scroll', function() {
+              if (pending) return;
+              pending = requestAnimationFrame(function() { pending = null; save(); });
+            }, { passive: true });
+          }
+          // a genuine user scroll cancels an in-flight restore
+          ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function(ev) {
+            window.addEventListener(ev, function() { restoring = false; }, { passive: true, capture: true });
+          });
+          window.addEventListener('pagehide', save);
+          restore();
+        }
+
+        return { init: init, save: save, restore: restore };
+      })();
+
       // Initialize theme and live reload on page load
       document.addEventListener("DOMContentLoaded", function () {
         initTheme();
@@ -3538,6 +3609,7 @@
         initMermaid();
         initContextMenu();
         initFileModifiedTs();
+        ScrollMemory.init();
 
         // sidebar link interception for tab management (view mode only)
         if (showNavigation && !isEditorMode) {
