@@ -267,7 +267,7 @@ pub(crate) async fn api_workspace_browse(
             config
                 .last_browse_dir
                 .as_ref()
-                .map(|d| PathBuf::from(d))
+                .map(PathBuf::from)
                 .filter(|p| p.is_dir())
                 .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
         });
