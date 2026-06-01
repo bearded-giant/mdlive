@@ -194,7 +194,10 @@ fn start_server_for_path(path: &std::path::Path) -> Result<u16, String> {
         return Err("path is not a file or directory".into());
     };
 
-    eprintln!("[mdlive] building router ({} files)...", tracked_files.len());
+    eprintln!(
+        "[mdlive] building router ({} files)...",
+        tracked_files.len()
+    );
     let router =
         mdlive::new_router_with_config(base_dir, tracked_files, is_dir_mode, AppConfig::load())
             .map_err(|e| e.to_string())?;
@@ -287,9 +290,7 @@ async fn handle_persist_session() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({"success": true}))
 }
 
-async fn start_server(
-    window_tx: std::sync::mpsc::Sender<PathBuf>,
-) -> Result<u16, String> {
+async fn start_server(window_tx: std::sync::mpsc::Sender<PathBuf>) -> Result<u16, String> {
     if let Some(port) = find_existing_server() {
         eprintln!("Reusing existing mdlive server on port {port}");
         return Ok(port);

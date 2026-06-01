@@ -357,7 +357,9 @@ impl MarkdownState {
 
         match result {
             Ok(html) => Ok(html),
-            Err(_) => Ok("<p><em>Could not render this file (markdown parser error)</em></p>".into()),
+            Err(_) => {
+                Ok("<p><em>Could not render this file (markdown parser error)</em></p>".into())
+            }
         }
     }
 
