@@ -43,11 +43,9 @@ pub(crate) async fn handle_file_event(event: Event, state: &SharedMarkdownState)
         notify::EventKind::Modify(notify::event::ModifyKind::Name(rename_mode)) => {
             use notify::event::RenameMode;
             match rename_mode {
-                RenameMode::Both => {
-                    if event.paths.len() == 2 {
-                        let new_path = &event.paths[1];
-                        handle_file_change(new_path, state).await;
-                    }
+                RenameMode::Both if event.paths.len() == 2 => {
+                    let new_path = &event.paths[1];
+                    handle_file_change(new_path, state).await;
                 }
                 RenameMode::From => {
                     if let Some(path) = event.paths.first() {
