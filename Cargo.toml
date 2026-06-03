@@ -28,6 +28,7 @@ minijinja = { version = "2.12.0", features = ["json"] }
 minijinja-embed = { version = "2.12.0", default-features = false }
 toml = "0.8"
 dirs = "6"
+csv = "1.3"
 
 [build-dependencies]
 minijinja-embed = { version = "2.12.0", default-features = false }

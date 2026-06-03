@@ -1023,3 +1023,87 @@ async fn test_single_file_root_still_serves_file() {
         "single-file mode should not show landing copy"
     );
 }
+
+fn dir_server_with(files: &[(&str, &str)]) -> (TestServer, tempfile::TempDir) {
+    let temp_dir = tempdir().expect("Failed to create temp dir");
+    for (name, content) in files {
+        fs::write(temp_dir.path().join(name), content).expect("Failed to write file");
+    }
+    let base_dir = temp_dir.path().to_path_buf();
+    let tracked = scan_supported_files(&base_dir).expect("Failed to scan");
+    let router = new_router(base_dir, tracked, true).expect("Failed to create router");
+    let server = TestServer::new(router).expect("Failed to create test server");
+    (server, temp_dir)
+}
+
+#[tokio::test]
+async fn test_csv_renders_as_html_table() {
+    let (server, _dir) = dir_server_with(&[("data.csv", "name,age\nAlice,30\nBob,25\n")]);
+    let resp = server.get("/data.csv").await;
+    assert_eq!(resp.status_code(), 200);
+    let body = resp.text();
+
+    assert!(body.contains("<table class=\"csv-table\">"));
+    assert!(body.contains("<th>name</th>"));
+    assert!(body.contains("<th>age</th>"));
+    assert!(body.contains("<td>Alice</td>"));
+    assert!(body.contains("<td>30</td>"));
+}
+
+#[tokio::test]
+async fn test_csv_escapes_html_in_cells() {
+    let (server, _dir) = dir_server_with(&[("x.csv", "a,b\n<script>,\"&hi\"\n")]);
+    let resp = server.get("/x.csv").await;
+    let body = resp.text();
+
+    assert!(body.contains("<td>&lt;script&gt;</td>"));
+    assert!(body.contains("&amp;hi"));
+}
+
+#[tokio::test]
+async fn test_yaml_renders_with_hljs_class() {
+    let (server, _dir) = dir_server_with(&[("conf.yaml", "key: value\nlist:\n  - a\n  - b\n")]);
+    let resp = server.get("/conf.yaml").await;
+    assert_eq!(resp.status_code(), 200);
+    let body = resp.text();
+    assert!(body.contains("language-yaml"));
+    assert!(body.contains("key: value"));
+}
+
+#[tokio::test]
+async fn test_yml_alias_also_renders_yaml() {
+    let (server, _dir) = dir_server_with(&[("c.yml", "a: 1\n")]);
+    let resp = server.get("/c.yml").await;
+    assert_eq!(resp.status_code(), 200);
+    assert!(resp.text().contains("language-yaml"));
+}
+
+#[tokio::test]
+async fn test_toml_renders_with_hljs_class() {
+    let (server, _dir) = dir_server_with(&[("Cargo.toml", "[package]\nname = \"x\"\n")]);
+    let resp = server.get("/Cargo.toml").await;
+    assert_eq!(resp.status_code(), 200);
+    let body = resp.text();
+    assert!(body.contains("language-toml"));
+    assert!(body.contains("[package]"));
+}
+
+#[tokio::test]
+async fn test_tree_emits_file_icons_per_type() {
+    let (server, _dir) = dir_server_with(&[
+        ("a.md", "# md"),
+        ("b.txt", "txt"),
+        ("c.json", "{}"),
+        ("d.csv", "x,y"),
+        ("e.yaml", "k: 1"),
+        ("f.toml", "k = 1"),
+    ]);
+    let resp = server.get("/a.md").await;
+    let body = resp.text();
+    assert!(body.contains("file-icon-markdown"));
+    assert!(body.contains("file-icon-plaintext"));
+    assert!(body.contains("file-icon-json"));
+    assert!(body.contains("file-icon-csv"));
+    assert!(body.contains("file-icon-yaml"));
+    assert!(body.contains("file-icon-toml"));
+}

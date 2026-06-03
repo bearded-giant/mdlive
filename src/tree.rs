@@ -82,12 +82,14 @@ fn build_tree_level(
             format!("{}/{}", prefix, file_name)
         };
         let (modified, created) = ts_map.get(full_path.as_str()).copied().unwrap_or((0, 0));
+        let file_type = crate::util::file_type_class(file_name);
         let mut map = HashMap::new();
         map.insert("name".to_string(), Value::from(file_name.clone()));
         map.insert("path".to_string(), Value::from(full_path));
         map.insert("is_dir".to_string(), Value::from(false));
         map.insert("modified".to_string(), Value::from(modified));
         map.insert("created".to_string(), Value::from(created));
+        map.insert("file_type".to_string(), Value::from(file_type));
         items.push((file_name.to_lowercase(), Value::from_object(map)));
     }
 

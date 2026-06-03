@@ -357,6 +357,42 @@
           text-overflow: ellipsis;
           white-space: nowrap;
           min-width: 0;
+          flex: 1;
+      }
+
+      .file-tree a .file-icon {
+          display: inline-block;
+          flex-shrink: 0;
+          width: 1.6em;
+          font-size: 9px;
+          font-weight: 600;
+          letter-spacing: 0;
+          text-align: center;
+          line-height: 1.4;
+          padding: 1px 2px;
+          border-radius: 3px;
+          border: 1px solid var(--blockquote-color);
+          color: var(--blockquote-color);
+          background: transparent;
+          text-transform: uppercase;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          opacity: 0.85;
+      }
+
+      .file-tree a .file-icon::before { content: "?"; }
+      .file-tree a .file-icon-markdown::before { content: "MD"; }
+      .file-tree a .file-icon-json::before { content: "{}"; }
+      .file-tree a .file-icon-csv::before { content: "CSV"; }
+      .file-tree a .file-icon-yaml::before { content: "YML"; }
+      .file-tree a .file-icon-toml::before { content: "TML"; }
+      .file-tree a .file-icon-plaintext::before { content: "TXT"; }
+      .file-tree a .file-icon-unknown::before { content: "·"; }
+
+      .file-tree a:hover .file-icon,
+      .file-tree a.active .file-icon {
+          opacity: 1;
+          border-color: currentColor;
+          color: currentColor;
       }
 
       .file-tree a .file-ts {
@@ -3781,7 +3817,7 @@
             </details>
             {% else %}
             <a href="/{{ item.path|safe }}" data-modified="{{ item.modified }}" data-created="{{ item.created }}"{% if item.path == current_file %} class="active"{% endif %}>
-              <span class="file-name">{{ item.name }}</span><span class="file-ts"></span>
+              <span class="file-icon file-icon-{{ item.file_type|default('unknown') }}" aria-hidden="true"></span><span class="file-name">{{ item.name }}</span><span class="file-ts"></span>
             </a>
             {% endif %}
           </li>

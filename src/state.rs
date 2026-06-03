@@ -340,6 +340,8 @@ impl MarkdownState {
     pub(crate) fn render_file_to_html(path: &Path, content: &str) -> Result<String> {
         if is_markdown_file(path) {
             Self::markdown_to_html(content)
+        } else if crate::util::is_csv_file(path) {
+            Ok(Self::csv_to_html(content))
         } else {
             Ok(Self::text_to_html(path, content))
         }
@@ -366,14 +368,70 @@ impl MarkdownState {
     fn text_to_html(path: &Path, content: &str) -> String {
         let lang = if crate::util::is_json_file(path) {
             "json"
+        } else if crate::util::is_yaml_file(path) {
+            "yaml"
+        } else if crate::util::is_toml_file(path) {
+            "toml"
         } else {
             "plaintext"
         };
-        let escaped = content
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;");
+        let escaped = escape_html(content);
         format!("<pre><code class=\"language-{lang}\">{escaped}</code></pre>")
     }
+
+    fn csv_to_html(content: &str) -> String {
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .from_reader(content.as_bytes());
+
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        for result in reader.records() {
+            match result {
+                Ok(record) => rows.push(record.iter().map(|s| s.to_string()).collect()),
+                Err(_) => {
+                    // fall back to plaintext on parse failure
+                    let escaped = escape_html(content);
+                    return format!(
+                        "<pre><code class=\"language-plaintext\">{escaped}</code></pre>"
+                    );
+                }
+            }
+        }
+
+        if rows.is_empty() {
+            return "<div class=\"csv-empty\"><em>(empty csv)</em></div>".to_string();
+        }
+
+        let mut out = String::from("<table class=\"csv-table\">");
+        let mut iter = rows.into_iter();
+        if let Some(header) = iter.next() {
+            out.push_str("<thead><tr>");
+            for cell in header {
+                out.push_str("<th>");
+                out.push_str(&escape_html(&cell));
+                out.push_str("</th>");
+            }
+            out.push_str("</tr></thead>");
+        }
+        out.push_str("<tbody>");
+        for row in iter {
+            out.push_str("<tr>");
+            for cell in row {
+                out.push_str("<td>");
+                out.push_str(&escape_html(&cell));
+                out.push_str("</td>");
+            }
+            out.push_str("</tr>");
+        }
+        out.push_str("</tbody></table>");
+        out
+    }
+}
+
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }

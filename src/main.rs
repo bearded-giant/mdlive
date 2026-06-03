@@ -147,7 +147,7 @@ async fn main() -> Result<()> {
             } else if absolute_path.is_dir() {
                 let tracked_files = scan_supported_files(&absolute_path)?;
                 if tracked_files.is_empty() {
-                    anyhow::bail!("No supported files found in directory (.md, .txt, .json)");
+                    anyhow::bail!("No supported files found in directory (.md, .txt, .json, .csv, .yaml, .yml, .toml)");
                 }
                 (absolute_path, tracked_files, true)
             } else {

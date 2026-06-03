@@ -154,7 +154,10 @@ fn validate_new_path(
             StatusCode::BAD_REQUEST,
             Json(ApiResponse {
                 success: false,
-                error: Some("only .md, .markdown, .txt, and .json extensions allowed".to_string()),
+                error: Some(
+                    "only .md, .markdown, .txt, .json, .csv, .yaml, .yml, .toml extensions allowed"
+                        .to_string(),
+                ),
                 path: None,
             }),
         ));
@@ -433,7 +436,11 @@ pub(crate) async fn api_create_file(
     let content = body.content.unwrap_or_else(|| {
         if crate::util::is_json_file(&target_full) {
             "{}\n".to_string()
-        } else if crate::util::is_text_file(&target_full) {
+        } else if crate::util::is_text_file(&target_full)
+            || crate::util::is_csv_file(&target_full)
+            || crate::util::is_yaml_file(&target_full)
+            || crate::util::is_toml_file(&target_full)
+        {
             String::new()
         } else {
             format!("# {}\n", filename_stem)

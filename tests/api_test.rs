@@ -534,3 +534,49 @@ async fn test_landing_renders_server_tabs_for_resume() {
         "embedded tab payload should contain saved path"
     );
 }
+
+#[tokio::test]
+async fn test_api_create_file_csv_yaml_toml() {
+    let (server, _temp_dir) = create_directory_server().await;
+
+    for ext in &["csv", "yaml", "yml", "toml"] {
+        let path = format!("new.{ext}");
+        let response = server
+            .post("/api/create_file")
+            .json(&serde_json::json!({"path": path}))
+            .await;
+        assert_eq!(
+            response.status_code(),
+            201,
+            "create_file should accept .{ext}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_api_save_round_trip_csv_yaml_toml() {
+    let (server, temp_dir) = create_directory_server().await;
+
+    let cases = [
+        ("data.csv", "a,b,c\n1,2,3\n"),
+        ("conf.yaml", "key: value\nlist:\n  - one\n"),
+        ("settings.toml", "[section]\nkey = \"v\"\n"),
+    ];
+
+    for (path, content) in &cases {
+        let create = server
+            .post("/api/create_file")
+            .json(&serde_json::json!({"path": path, "content": ""}))
+            .await;
+        assert_eq!(create.status_code(), 201, "create {path}");
+
+        let save = server
+            .post("/api/save_file")
+            .json(&serde_json::json!({"path": path, "content": content}))
+            .await;
+        assert_eq!(save.status_code(), 200, "save {path}");
+
+        let on_disk = fs::read_to_string(temp_dir.path().join(path)).unwrap();
+        assert_eq!(on_disk, *content, "round-trip {path}");
+    }
+}

@@ -77,8 +77,34 @@ pub(crate) fn is_json_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn is_csv_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("csv"))
+        .unwrap_or(false)
+}
+
+pub(crate) fn is_yaml_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("yaml") || ext.eq_ignore_ascii_case("yml"))
+        .unwrap_or(false)
+}
+
+pub(crate) fn is_toml_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("toml"))
+        .unwrap_or(false)
+}
+
 pub(crate) fn is_supported_file(path: &Path) -> bool {
-    is_markdown_file(path) || is_text_file(path) || is_json_file(path)
+    is_markdown_file(path)
+        || is_text_file(path)
+        || is_json_file(path)
+        || is_csv_file(path)
+        || is_yaml_file(path)
+        || is_toml_file(path)
 }
 
 pub(crate) fn file_type_class(filename: &str) -> &'static str {
@@ -87,6 +113,12 @@ pub(crate) fn file_type_class(filename: &str) -> &'static str {
         "markdown"
     } else if is_json_file(path) {
         "json"
+    } else if is_csv_file(path) {
+        "csv"
+    } else if is_yaml_file(path) {
+        "yaml"
+    } else if is_toml_file(path) {
+        "toml"
     } else if is_text_file(path) {
         "plaintext"
     } else {
@@ -217,12 +249,50 @@ mod tests {
     }
 
     #[test]
+    fn test_is_csv_file() {
+        assert!(is_csv_file(Path::new("test.csv")));
+        assert!(is_csv_file(Path::new("/path/to/file.csv")));
+        assert!(is_csv_file(Path::new("test.CSV")));
+        assert!(is_csv_file(Path::new("test.Csv")));
+        assert!(!is_csv_file(Path::new("test.tsv")));
+        assert!(!is_csv_file(Path::new("test.md")));
+        assert!(!is_csv_file(Path::new("test")));
+    }
+
+    #[test]
+    fn test_is_yaml_file() {
+        assert!(is_yaml_file(Path::new("test.yaml")));
+        assert!(is_yaml_file(Path::new("test.yml")));
+        assert!(is_yaml_file(Path::new("test.YAML")));
+        assert!(is_yaml_file(Path::new("test.Yml")));
+        assert!(is_yaml_file(Path::new("/path/to/file.yaml")));
+        assert!(!is_yaml_file(Path::new("test.yamll")));
+        assert!(!is_yaml_file(Path::new("test.json")));
+        assert!(!is_yaml_file(Path::new("test")));
+    }
+
+    #[test]
+    fn test_is_toml_file() {
+        assert!(is_toml_file(Path::new("test.toml")));
+        assert!(is_toml_file(Path::new("/path/to/Cargo.toml")));
+        assert!(is_toml_file(Path::new("test.TOML")));
+        assert!(is_toml_file(Path::new("test.Toml")));
+        assert!(!is_toml_file(Path::new("test.tml")));
+        assert!(!is_toml_file(Path::new("test.ini")));
+        assert!(!is_toml_file(Path::new("test")));
+    }
+
+    #[test]
     fn test_is_supported_file() {
         assert!(is_supported_file(Path::new("test.md")));
         assert!(is_supported_file(Path::new("test.markdown")));
         assert!(is_supported_file(Path::new("test.txt")));
         assert!(is_supported_file(Path::new("test.json")));
         assert!(is_supported_file(Path::new("test.JSON")));
+        assert!(is_supported_file(Path::new("test.csv")));
+        assert!(is_supported_file(Path::new("test.yaml")));
+        assert!(is_supported_file(Path::new("test.yml")));
+        assert!(is_supported_file(Path::new("test.toml")));
         assert!(!is_supported_file(Path::new("test.rs")));
         assert!(!is_supported_file(Path::new("test.html")));
         assert!(!is_supported_file(Path::new("test")));
@@ -236,6 +306,12 @@ mod tests {
         assert_eq!(file_type_class("test.JSON"), "json");
         assert_eq!(file_type_class("test.txt"), "plaintext");
         assert_eq!(file_type_class("test.TXT"), "plaintext");
+        assert_eq!(file_type_class("test.csv"), "csv");
+        assert_eq!(file_type_class("test.CSV"), "csv");
+        assert_eq!(file_type_class("test.yaml"), "yaml");
+        assert_eq!(file_type_class("test.yml"), "yaml");
+        assert_eq!(file_type_class("test.toml"), "toml");
+        assert_eq!(file_type_class("test.TOML"), "toml");
         assert_eq!(file_type_class("test.rs"), "unknown");
         assert_eq!(file_type_class("test"), "unknown");
     }
@@ -255,11 +331,15 @@ mod tests {
         fs::write(temp_dir.path().join("test2.markdown"), "# Test 2").expect("Failed to write");
         fs::write(temp_dir.path().join("test3.txt"), "text").expect("Failed to write");
         fs::write(temp_dir.path().join("test4.json"), "{}").expect("Failed to write");
+        fs::write(temp_dir.path().join("test5.csv"), "a,b,c").expect("Failed to write");
+        fs::write(temp_dir.path().join("test6.yaml"), "a: 1").expect("Failed to write");
+        fs::write(temp_dir.path().join("test7.yml"), "b: 2").expect("Failed to write");
+        fs::write(temp_dir.path().join("test8.toml"), "k = 1").expect("Failed to write");
         fs::write(temp_dir.path().join("README"), "readme").expect("Failed to write");
         fs::write(temp_dir.path().join("test.rs"), "fn main(){}").expect("Failed to write");
 
         let result = scan_supported_files(temp_dir.path()).expect("Failed to scan");
-        assert_eq!(result.len(), 4);
+        assert_eq!(result.len(), 8);
 
         let filenames: Vec<_> = result
             .iter()
@@ -269,6 +349,10 @@ mod tests {
         assert!(filenames.contains(&"test2.markdown"));
         assert!(filenames.contains(&"test3.txt"));
         assert!(filenames.contains(&"test4.json"));
+        assert!(filenames.contains(&"test5.csv"));
+        assert!(filenames.contains(&"test6.yaml"));
+        assert!(filenames.contains(&"test7.yml"));
+        assert!(filenames.contains(&"test8.toml"));
     }
 
     #[test]

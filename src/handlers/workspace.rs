@@ -97,7 +97,10 @@ pub(crate) async fn api_workspace_switch(
                 StatusCode::BAD_REQUEST,
                 Json(WorkspaceResponse {
                     success: false,
-                    error: Some("no supported files found (.md, .txt, .json)".to_string()),
+                    error: Some(
+                        "no supported files found (.md, .txt, .json, .csv, .yaml, .yml, .toml)"
+                            .to_string(),
+                    ),
                     base_dir: None,
                     mode: None,
                     file_count: None,
