@@ -341,6 +341,32 @@ fn shorten_path(path: &str) -> String {
     }
 }
 
+fn format_relative_time(epoch_secs: u64) -> String {
+    if epoch_secs == 0 {
+        return String::new();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let diff = now.saturating_sub(epoch_secs);
+    if diff < 60 {
+        "now".to_string()
+    } else if diff < 3600 {
+        format!("{}m", diff / 60)
+    } else if diff < 86_400 {
+        format!("{}h", diff / 3600)
+    } else if diff < 7 * 86_400 {
+        format!("{}d", diff / 86_400)
+    } else if diff < 30 * 86_400 {
+        format!("{}w", diff / (7 * 86_400))
+    } else if diff < 365 * 86_400 {
+        format!("{}mo", diff / (30 * 86_400))
+    } else {
+        format!("{}y", diff / (365 * 86_400))
+    }
+}
+
 fn build_menu(app: &tauri::App) -> tauri::Result<()> {
     let config = AppConfig::load();
 
@@ -349,30 +375,18 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .accelerator("CmdOrCtrl+O")
         .build(app)?;
 
-    // recent submenu -- files first, separator, then directories
+    // recent submenu -- chronological (most recent first), mode glyph + relative timestamp
     let mut recent_builder = SubmenuBuilder::new(app, "Open Recent");
 
-    let files: Vec<_> = config.recent.iter().filter(|r| r.mode == "file").collect();
-    let directories: Vec<_> = config
-        .recent
-        .iter()
-        .filter(|r| r.mode == "directory")
-        .collect();
-
-    for entry in &files {
-        let label = shorten_path(&entry.path);
-        let item = MenuItemBuilder::new(&label)
-            .id(format!("recent:{}", entry.path))
-            .build(app)?;
-        recent_builder = recent_builder.item(&item);
-    }
-
-    if !files.is_empty() && !directories.is_empty() {
-        recent_builder = recent_builder.separator();
-    }
-
-    for entry in &directories {
-        let label = shorten_path(&entry.path);
+    for entry in &config.recent {
+        let glyph = if entry.mode == "directory" { "📁" } else { "📄" };
+        let path = shorten_path(&entry.path);
+        let ts = format_relative_time(entry.last_opened);
+        let label = if ts.is_empty() {
+            format!("{glyph}  {path}")
+        } else {
+            format!("{glyph}  {path}  —  {ts}")
+        };
         let item = MenuItemBuilder::new(&label)
             .id(format!("recent:{}", entry.path))
             .build(app)?;

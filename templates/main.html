@@ -66,6 +66,22 @@
       })();
     </script>
 
+    <script>
+      // shared helper: epoch seconds → relative time label (compact)
+      window.formatRelativeTime = function(epoch) {
+          if (!epoch) return '';
+          var now = Math.floor(Date.now() / 1000);
+          var diff = Math.max(0, now - epoch);
+          if (diff < 60) return 'now';
+          if (diff < 3600) return Math.floor(diff / 60) + 'm';
+          if (diff < 86400) return Math.floor(diff / 3600) + 'h';
+          if (diff < 604800) return Math.floor(diff / 86400) + 'd';
+          if (diff < 2592000) return Math.floor(diff / 604800) + 'w';
+          if (diff < 31536000) return Math.floor(diff / 2592000) + 'mo';
+          return Math.floor(diff / 31536000) + 'y';
+      };
+    </script>
+
     <style>
       /* Prevent flash by hiding content until theme is applied */
       html:not(.theme-initialized) body {
@@ -1417,6 +1433,17 @@
           flex-shrink: 0;
           width: 20px;
           text-align: center;
+      }
+
+      .workspace-recent-ts {
+          font-size: 11px;
+          color: var(--blockquote-color);
+          flex-shrink: 0;
+          font-variant-numeric: tabular-nums;
+          margin-left: 8px;
+      }
+      .workspace-recent-item.active .workspace-recent-ts {
+          color: rgba(255, 255, 255, 0.85);
       }
 
       .workspace-recent-path {
@@ -2972,17 +2999,7 @@
         });
       }
 
-      function formatRelativeTime(epoch) {
-        var now = Math.floor(Date.now() / 1000);
-        var diff = now - epoch;
-        if (diff < 60) return "now";
-        if (diff < 3600) return Math.floor(diff / 60) + "m";
-        if (diff < 86400) return Math.floor(diff / 3600) + "h";
-        if (diff < 604800) return Math.floor(diff / 86400) + "d";
-        var d = new Date(epoch * 1000);
-        var months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-        return months[d.getMonth()] + " " + d.getDate();
-      }
+      var formatRelativeTime = window.formatRelativeTime;
 
       function initFileModifiedTs() {
         var el = document.querySelector('.file-modified-ts');
@@ -5532,8 +5549,11 @@
                       };
                       li.ondblclick = function() { doSwitch(entry.path); };
                       var icon = entry.mode === 'directory' ? '\uD83D\uDCC1' : '\uD83D\uDCC4';
+                      var ts = window.formatRelativeTime ? window.formatRelativeTime(entry.last_opened) : '';
+                      var escPath = entry.path.replace(/&/g,'&amp;').replace(/</g,'&lt;');
                       li.innerHTML = '<span class="workspace-recent-icon">' + icon + '</span>' +
-                          '<span class="workspace-recent-path">' + entry.path.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</span>';
+                          '<span class="workspace-recent-path">' + escPath + '</span>' +
+                          (ts ? '<span class="workspace-recent-ts">' + ts + '</span>' : '');
                       list.appendChild(li);
                   });
               });
@@ -6155,8 +6175,10 @@
                       };
                       li.ondblclick = function() { switchWorkspace(entry.path); };
                       var icon = entry.mode === 'directory' ? '\uD83D\uDCC1' : '\uD83D\uDCC4';
+                      var ts = window.formatRelativeTime ? window.formatRelativeTime(entry.last_opened) : '';
                       li.innerHTML = '<span class="workspace-recent-icon">' + icon + '</span>' +
-                          '<span class="workspace-recent-path">' + escapeHtml(entry.path) + '</span>';
+                          '<span class="workspace-recent-path">' + escapeHtml(entry.path) + '</span>' +
+                          (ts ? '<span class="workspace-recent-ts">' + ts + '</span>' : '');
                       list.appendChild(li);
                   });
               });
