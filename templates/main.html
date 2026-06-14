@@ -1399,6 +1399,26 @@
           letter-spacing: 0.5px;
       }
 
+      .workspace-recent-filter {
+          width: 100%;
+          padding: 7px 12px;
+          font-size: 13px;
+          font-family: var(--code-font);
+          background: var(--code-bg);
+          color: var(--text-color);
+          border: 1px solid var(--border-color-light);
+          border-radius: 6px;
+          outline: none;
+          margin: 0 0 8px 0;
+          box-sizing: border-box;
+      }
+      .workspace-recent-filter:focus {
+          border-color: var(--link-color);
+      }
+      .workspace-recent-filter::placeholder {
+          color: var(--blockquote-color);
+      }
+
       .workspace-recent-list {
           list-style: none;
           margin: 0;
@@ -1763,6 +1783,73 @@
 
       .workspace-picker-page .workspace-modal-content {
           max-width: 680px;
+      }
+
+      .workspace-picker-page .workspace-picker-card {
+          max-width: 820px;
+      }
+      .workspace-picker-cols {
+          display: flex;
+          gap: 28px;
+          align-items: stretch;
+      }
+      .picker-col-left {
+          flex: 1.3;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+      }
+      .picker-col-left .workspace-recent-heading {
+          margin-top: 0;
+      }
+      .picker-col-left .workspace-recent-list {
+          flex: 1;
+          max-height: 360px;
+      }
+      .picker-col-right {
+          width: 240px;
+          flex-shrink: 0;
+          border-left: 1px solid var(--border-color);
+          padding-left: 28px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+      }
+      .picker-col-right img {
+          width: 190px;
+          display: block;
+          margin: 0 auto 12px;
+      }
+      .picker-col-right h3 {
+          margin: 0 0 16px 0;
+          font-size: 16px;
+          color: var(--text-color);
+          text-align: center;
+      }
+      .picker-col-right .workspace-path-input {
+          width: 100%;
+          margin-bottom: 8px;
+      }
+      .picker-btn-block {
+          width: 100%;
+          justify-content: center;
+          margin-bottom: 8px;
+      }
+      .picker-col-right .workspace-error {
+          width: 100%;
+          text-align: center;
+      }
+
+      @media (max-width: 620px) {
+          .workspace-picker-cols { flex-direction: column; }
+          .picker-col-right {
+              width: 100%;
+              border-left: none;
+              padding-left: 0;
+              border-top: 1px solid var(--border-color);
+              padding-top: 16px;
+          }
       }
 
       /* Content width presets */
@@ -5450,30 +5537,42 @@
     {% else %}
     {% if no_workspace|default(false) %}
     <div class="workspace-picker-page">
-      <div class="workspace-modal-content">
-        <img src="/static/mdlive.png" alt="mdlive" style="width:280px;display:block;margin:0 auto 16px" />
-        <h3 style="margin:0 0 16px 0;text-align:center;color:var(--text-color)">Open Workspace</h3>
-        <div class="workspace-input-row">
-          <input
-            type="text"
-            class="workspace-path-input"
-            id="pickerPageInput"
-            placeholder="~/dev/my-project or ~/notes/todo.md"
-            autocomplete="off"
-            spellcheck="false"
-            autofocus
-          />
-          <button class="workspace-browse-btn" id="pickerBrowseBtn" type="button">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path>
-            </svg>
-            Browse
-          </button>
-          <button class="workspace-open-btn" id="pickerOpenBtn" type="button">Open</button>
+      <div class="workspace-modal-content workspace-picker-card">
+        <div class="workspace-picker-cols">
+          <div class="picker-col-left">
+            <div class="workspace-recent-heading">Recent</div>
+            <input
+              type="text"
+              class="workspace-recent-filter"
+              id="pickerPageRecentFilter"
+              placeholder="Filter recent..."
+              autocomplete="off"
+              spellcheck="false"
+              autofocus
+            />
+            <ul class="workspace-recent-list" id="pickerPageRecentList"></ul>
+          </div>
+          <div class="picker-col-right">
+            <img src="/static/mdlive.png" alt="mdlive" />
+            <h3>Open Workspace</h3>
+            <input
+              type="text"
+              class="workspace-path-input"
+              id="pickerPageInput"
+              placeholder="~/dev/my-project"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="workspace-browse-btn picker-btn-block" id="pickerBrowseBtn" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"></path>
+              </svg>
+              Browse
+            </button>
+            <button class="workspace-open-btn picker-btn-block" id="pickerOpenBtn" type="button">Open</button>
+            <p class="workspace-error" id="pickerPageError"></p>
+          </div>
         </div>
-        <p class="workspace-error" id="pickerPageError"></p>
-        <div class="workspace-recent-heading">Recent</div>
-        <ul class="workspace-recent-list" id="pickerPageRecentList"></ul>
       </div>
       <div class="workspace-picker-version">v{{ app_version }}</div>
     </div>
@@ -5484,6 +5583,18 @@
           var list = document.getElementById('pickerPageRecentList');
           var browseBtn = document.getElementById('pickerBrowseBtn');
           var openBtn = document.getElementById('pickerOpenBtn');
+          var filterEl = document.getElementById('pickerPageRecentFilter');
+
+          if (filterEl) {
+              filterEl.addEventListener('input', function() {
+                  var q = filterEl.value.trim().toLowerCase();
+                  list.querySelectorAll('.workspace-recent-item').forEach(function(it) {
+                      var p = it.querySelector('.workspace-recent-path');
+                      var txt = p ? p.textContent.toLowerCase() : '';
+                      it.style.display = (!q || txt.indexOf(q) !== -1) ? '' : 'none';
+                  });
+              });
+          }
 
           input.addEventListener('keydown', function(e) {
               if (e.key === 'Enter') {
@@ -6113,6 +6224,7 @@
         </div>
         <p class="workspace-error" id="workspaceError"></p>
         <div class="workspace-recent-heading">Recent</div>
+        <input type="text" class="workspace-recent-filter" id="workspaceRecentFilter" placeholder="Filter recent..." autocomplete="off" spellcheck="false" />
         <ul class="workspace-recent-list" id="workspaceRecentList">
         </ul>
       </div>
@@ -6181,6 +6293,18 @@
                           (ts ? '<span class="workspace-recent-ts">' + ts + '</span>' : '');
                       list.appendChild(li);
                   });
+                  var filterEl = document.getElementById('workspaceRecentFilter');
+                  if (filterEl) {
+                      filterEl.value = '';
+                      filterEl.oninput = function() {
+                          var q = filterEl.value.trim().toLowerCase();
+                          list.querySelectorAll('.workspace-recent-item').forEach(function(it) {
+                              var p = it.querySelector('.workspace-recent-path');
+                              var txt = p ? p.textContent.toLowerCase() : '';
+                              it.style.display = (!q || txt.indexOf(q) !== -1) ? '' : 'none';
+                          });
+                      };
+                  }
               });
       }
 

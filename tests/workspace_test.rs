@@ -17,6 +17,34 @@ async fn test_daemon_root_shows_workspace_picker() {
 }
 
 #[tokio::test]
+async fn test_picker_query_forces_selector_with_workspace_loaded() {
+    let (server, _cfg_dir) = create_daemon_server();
+    let temp_dir = tempfile::tempdir().unwrap();
+    fs::write(temp_dir.path().join("hello.md"), "# Hello").unwrap();
+
+    server
+        .post("/api/workspace/switch")
+        .json(&serde_json::json!({ "path": temp_dir.path().to_str().unwrap() }))
+        .await
+        .assert_status_ok();
+
+    // workspace is loaded, so "/" renders it...
+    let root = server.get("/").await;
+    assert!(
+        !root.text().contains("pickerPageInput"),
+        "/ should render workspace"
+    );
+
+    // ...but ?picker forces the selector for freshly spawned windows
+    let picker = server.get("/?picker=1").await;
+    picker.assert_status_ok();
+    assert!(
+        picker.text().contains("pickerPageInput"),
+        "?picker should force the selector even with a workspace loaded"
+    );
+}
+
+#[tokio::test]
 async fn test_workspace_current_no_workspace() {
     let (server, _cfg_dir) = create_daemon_server();
     let response = server.get("/api/workspace/current").await;

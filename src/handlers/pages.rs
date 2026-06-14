@@ -22,10 +22,17 @@ pub(crate) struct NewFileQuery {
     dir: String,
 }
 
-pub(crate) async fn serve_html_root(State(state): State<SharedMarkdownState>) -> impl IntoResponse {
+pub(crate) async fn serve_html_root(
+    State(state): State<SharedMarkdownState>,
+    axum::extract::RawQuery(query): axum::extract::RawQuery,
+) -> impl IntoResponse {
     let mut state = state.lock().await;
 
-    if state.daemon_mode && !state.has_workspace() {
+    // ?picker forces the selector even when the daemon already holds a workspace,
+    // so a freshly spawned window lands on the index regardless of shared state
+    let force_picker = query.as_deref().is_some_and(|q| q.contains("picker"));
+
+    if state.daemon_mode && (force_picker || !state.has_workspace()) {
         return render_workspace_picker(&state);
     }
 

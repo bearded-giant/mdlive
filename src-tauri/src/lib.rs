@@ -242,6 +242,26 @@ fn create_window(app_handle: &tauri::AppHandle, port: u16, path: &std::path::Pat
     }
 }
 
+// fresh window on the daemon picker (?picker forces the selector regardless of
+// the daemon's current workspace), independent of any open project windows
+fn create_picker_window(app_handle: &tauri::AppHandle, port: u16) {
+    let url = format!("http://127.0.0.1:{port}/?picker=1");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let label = format!("picker-{stamp}");
+    let _ = tauri::WebviewWindowBuilder::new(
+        app_handle,
+        &label,
+        tauri::WebviewUrl::External(url.parse().unwrap()),
+    )
+    .title("mdlive")
+    .inner_size(1500.0, 1000.0)
+    .min_inner_size(600.0, 400.0)
+    .build();
+}
+
 // start server on a background thread, then create window on main thread
 fn open_path_in_window(app_handle: &tauri::AppHandle, path: PathBuf) {
     let handle = app_handle.clone();
@@ -371,6 +391,11 @@ fn format_relative_time(epoch_secs: u64) -> String {
 fn build_menu(app: &tauri::App) -> tauri::Result<()> {
     let config = AppConfig::load();
 
+    let new_window = MenuItemBuilder::new("New Window")
+        .id("new_window")
+        .accelerator("CmdOrCtrl+N")
+        .build(app)?;
+
     let open = MenuItemBuilder::new("Open...")
         .id("open")
         .accelerator("CmdOrCtrl+O")
@@ -380,7 +405,11 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
     let mut recent_builder = SubmenuBuilder::new(app, "Open Recent");
 
     for entry in &config.recent {
-        let glyph = if entry.mode == "directory" { "📁" } else { "📄" };
+        let glyph = if entry.mode == "directory" {
+            "📁"
+        } else {
+            "📄"
+        };
         let path = shorten_path(&entry.path);
         let ts = format_relative_time(entry.last_opened);
         let label = if ts.is_empty() {
@@ -437,6 +466,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .build()?;
 
     let file_menu = SubmenuBuilder::new(app, "File")
+        .item(&new_window)
         .item(&open)
         .separator()
         .item(&recent_menu)
@@ -554,7 +584,10 @@ pub fn run() {
             app.on_menu_event(|app_handle, event| {
                 let id = event.id().as_ref().to_string();
 
-                if id == "open" {
+                if id == "new_window" {
+                    let port = SERVER_PORT.get().copied().unwrap_or(mdlive::DEFAULT_PORT);
+                    create_picker_window(app_handle, port);
+                } else if id == "open" {
                     let start = AppConfig::load()
                         .last_browse_dir
                         .map(PathBuf::from);
