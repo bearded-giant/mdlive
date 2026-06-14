@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "mdlive"
-version = "2.3.6"
+version = "2.3.7"
 authors = ["Jose Fernandez <me@jrfernandez.com>", "Bryan Grimes"]
 edition = "2021"
 rust-version = "1.82.0"

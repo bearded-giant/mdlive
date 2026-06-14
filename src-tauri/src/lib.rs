@@ -24,6 +24,7 @@ fn pick_file_or_folder(
     panel.setCanChooseDirectories(true);
     panel.setAllowsMultipleSelection(false);
     panel.setResolvesAliases(true);
+    panel.setShowsHiddenFiles(true);
 
     if let Some(dir) = start_dir {
         if dir.is_dir() {
