@@ -84,7 +84,7 @@ fn register_window_path(label: &str, path: &std::path::Path) {
             );
         }
     }
-    persist_workspaces();
+    std::thread::spawn(persist_workspaces);
 }
 
 fn unregister_window_path(label: &str) {
@@ -93,7 +93,8 @@ fn unregister_window_path(label: &str) {
             map.remove(label);
         }
     }
-    persist_workspaces();
+    // persist does blocking self-HTTP + file I/O; never run it on the main thread
+    std::thread::spawn(persist_workspaces);
 }
 
 fn persist_workspaces() {
@@ -125,6 +126,11 @@ fn query_daemon_workspace(port: u16) -> Option<String> {
     let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().ok()?;
     let mut stream =
         std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200)).ok()?;
+    // bound the read/write -- without these a stuck daemon would block the caller
+    // forever (the close path runs this on the main thread -> beach ball)
+    let to = std::time::Duration::from_millis(300);
+    stream.set_read_timeout(Some(to)).ok()?;
+    stream.set_write_timeout(Some(to)).ok()?;
     let req = format!(
         "GET /api/workspace/current HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
     );
@@ -151,6 +157,9 @@ fn check_mdlive_server(port: u16) -> bool {
     ) else {
         return false;
     };
+    let to = std::time::Duration::from_millis(300);
+    let _ = stream.set_read_timeout(Some(to));
+    let _ = stream.set_write_timeout(Some(to));
     let _ = stream.write_all(request.as_bytes());
     let _ = stream.flush();
     let mut buf = vec![0u8; 512];
@@ -307,7 +316,9 @@ async fn handle_window_new(
 }
 
 async fn handle_persist_session() -> axum::Json<serde_json::Value> {
-    persist_workspaces();
+    // persist_workspaces makes a blocking self-HTTP call; running it directly on
+    // the async worker can starve the runtime (the self-call needs a free worker)
+    let _ = tokio::task::spawn_blocking(persist_workspaces).await;
     axum::Json(serde_json::json!({"success": true}))
 }
 
