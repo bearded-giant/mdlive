@@ -194,7 +194,8 @@ async fn render_file_with_default_flag(
     let (content, has_mermaid, file_modified) =
         if let Some(tracked) = state.tracked_files.get(current_file) {
             let html = &tracked.html;
-            let mermaid = file_type == "markdown" && html.contains(r#"class="language-mermaid""#);
+            let mermaid = matches!(file_type, "markdown" | "mermaid")
+                && html.contains(r#"class="language-mermaid""#);
             let modified = tracked
                 .last_modified
                 .duration_since(UNIX_EPOCH)

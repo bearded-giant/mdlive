@@ -1089,6 +1089,17 @@ async fn test_toml_renders_with_hljs_class() {
 }
 
 #[tokio::test]
+async fn test_mmd_renders_mermaid_block() {
+    let (server, _dir) = dir_server_with(&[("flow.mmd", "graph TD\n  A --> B\n")]);
+    let resp = server.get("/flow.mmd").await;
+    assert_eq!(resp.status_code(), 200);
+    let body = resp.text();
+    assert!(body.contains(r#"class="language-mermaid""#));
+    assert!(body.contains("graph TD"));
+    assert!(body.contains(r#"<script src="/mermaid.min.js"></script>"#));
+}
+
+#[tokio::test]
 async fn test_tree_emits_file_icons_per_type() {
     let (server, _dir) = dir_server_with(&[
         ("a.md", "# md"),
@@ -1097,6 +1108,7 @@ async fn test_tree_emits_file_icons_per_type() {
         ("d.csv", "x,y"),
         ("e.yaml", "k: 1"),
         ("f.toml", "k = 1"),
+        ("g.mmd", "graph TD\n  A --> B"),
     ]);
     let resp = server.get("/a.md").await;
     let body = resp.text();
@@ -1106,4 +1118,5 @@ async fn test_tree_emits_file_icons_per_type() {
     assert!(body.contains("file-icon-csv"));
     assert!(body.contains("file-icon-yaml"));
     assert!(body.contains("file-icon-toml"));
+    assert!(body.contains("file-icon-mermaid"));
 }

@@ -98,6 +98,13 @@ pub(crate) fn is_toml_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn is_mermaid_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("mmd"))
+        .unwrap_or(false)
+}
+
 pub(crate) fn is_supported_file(path: &Path) -> bool {
     is_markdown_file(path)
         || is_text_file(path)
@@ -105,6 +112,7 @@ pub(crate) fn is_supported_file(path: &Path) -> bool {
         || is_csv_file(path)
         || is_yaml_file(path)
         || is_toml_file(path)
+        || is_mermaid_file(path)
 }
 
 pub(crate) fn file_type_class(filename: &str) -> &'static str {
@@ -119,6 +127,8 @@ pub(crate) fn file_type_class(filename: &str) -> &'static str {
         "yaml"
     } else if is_toml_file(path) {
         "toml"
+    } else if is_mermaid_file(path) {
+        "mermaid"
     } else if is_text_file(path) {
         "plaintext"
     } else {
@@ -283,6 +293,17 @@ mod tests {
     }
 
     #[test]
+    fn test_is_mermaid_file() {
+        assert!(is_mermaid_file(Path::new("test.mmd")));
+        assert!(is_mermaid_file(Path::new("/path/to/diagram.mmd")));
+        assert!(is_mermaid_file(Path::new("test.MMD")));
+        assert!(is_mermaid_file(Path::new("test.Mmd")));
+        assert!(!is_mermaid_file(Path::new("test.mermaid")));
+        assert!(!is_mermaid_file(Path::new("test.md")));
+        assert!(!is_mermaid_file(Path::new("test")));
+    }
+
+    #[test]
     fn test_is_supported_file() {
         assert!(is_supported_file(Path::new("test.md")));
         assert!(is_supported_file(Path::new("test.markdown")));
@@ -312,6 +333,8 @@ mod tests {
         assert_eq!(file_type_class("test.yml"), "yaml");
         assert_eq!(file_type_class("test.toml"), "toml");
         assert_eq!(file_type_class("test.TOML"), "toml");
+        assert_eq!(file_type_class("test.mmd"), "mermaid");
+        assert_eq!(file_type_class("test.MMD"), "mermaid");
         assert_eq!(file_type_class("test.rs"), "unknown");
         assert_eq!(file_type_class("test"), "unknown");
     }

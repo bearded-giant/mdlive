@@ -98,7 +98,7 @@ pub(crate) async fn api_workspace_switch(
                 Json(WorkspaceResponse {
                     success: false,
                     error: Some(
-                        "no supported files found (.md, .txt, .json, .csv, .yaml, .yml, .toml)"
+                        "no supported files found (.md, .txt, .json, .csv, .yaml, .yml, .toml, .mmd)"
                             .to_string(),
                     ),
                     base_dir: None,

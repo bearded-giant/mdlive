@@ -401,6 +401,7 @@
       .file-tree a .file-icon-csv::before { content: "CSV"; }
       .file-tree a .file-icon-yaml::before { content: "YML"; }
       .file-tree a .file-icon-toml::before { content: "TML"; }
+      .file-tree a .file-icon-mermaid::before { content: "MMD"; }
       .file-tree a .file-icon-plaintext::before { content: "TXT"; }
       .file-tree a .file-icon-unknown::before { content: "·"; }
 
@@ -3303,8 +3304,13 @@
           copyBtn.onclick = function () {
             copyRawMarkdown(path);
           };
+          var copyPathBtn = createMenuItem("Copy path", false);
+          copyPathBtn.onclick = function () {
+            copyPath(path);
+          };
           menu.appendChild(editBtn);
           menu.appendChild(copyBtn);
+          menu.appendChild(copyPathBtn);
 
           if (isDirectoryMode) {
             var moveBtn = createMenuItem("Move / rename", false);
@@ -3340,8 +3346,13 @@
           newDirBtn.onclick = function () {
             addNewDirectory(path);
           };
+          var copyDirPathBtn = createMenuItem("Copy path", false);
+          copyDirPathBtn.onclick = function () {
+            copyPath(path);
+          };
           menu.appendChild(newBtn);
           menu.appendChild(newDirBtn);
+          menu.appendChild(copyDirPathBtn);
           // rename / delete don't apply to the workspace root (path === "")
           if (path) {
             var moveDirBtn = createMenuItem("Move / rename", false);
@@ -3379,6 +3390,14 @@
         navigator.clipboard.writeText(full).then(function() {
           btn.classList.add('copied');
           setTimeout(function() { btn.classList.remove('copied'); }, 1200);
+        });
+      }
+
+      function copyPath(path) {
+        hideContextMenu();
+        var full = baseDir ? (path ? baseDir + "/" + path : baseDir) : path;
+        navigator.clipboard.writeText(full).catch(function (err) {
+          alert("Failed to copy: " + err.message);
         });
       }
 

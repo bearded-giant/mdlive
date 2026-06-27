@@ -342,6 +342,11 @@ impl MarkdownState {
             Self::markdown_to_html(content)
         } else if crate::util::is_csv_file(path) {
             Ok(Self::csv_to_html(content))
+        } else if crate::util::is_mermaid_file(path) {
+            Ok(format!(
+                "<pre><code class=\"language-mermaid\">{}</code></pre>",
+                escape_html(content)
+            ))
         } else {
             Ok(Self::text_to_html(path, content))
         }
