@@ -32,7 +32,7 @@ pub(crate) async fn serve_html_root(
     // so a freshly spawned window lands on the index regardless of shared state
     let force_picker = query.as_deref().is_some_and(|q| q.contains("picker"));
 
-    if state.daemon_mode && (force_picker || !state.has_workspace()) {
+    if force_picker || (state.daemon_mode && !state.has_workspace()) {
         return render_workspace_picker(&state);
     }
 

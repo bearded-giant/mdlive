@@ -5635,8 +5635,33 @@
               });
           });
 
+          function showErr(msg) {
+              if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+          }
+
+          // desktop app: spawn an independent window (own server) so multiple
+          // workspaces don't share one daemon state and flip each other
           function doSwitch(path) {
               if (errEl) { errEl.style.display = 'none'; }
+              fetch('/api/window/new', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ path: path })
+              })
+              .then(function(r) { return r.status === 404 ? null : r.json(); })
+              .then(function(data) {
+                  if (data === null) { switchInPlace(path); return; }
+                  if (data.success) {
+                      try { window.close(); } catch (_) {}
+                  } else {
+                      showErr(data.error || 'Failed to open workspace');
+                  }
+              })
+              .catch(function() { switchInPlace(path); });
+          }
+
+          // plain-browser daemon (no native windows): switch shared state in place
+          function switchInPlace(path) {
               fetch('/api/workspace/switch', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -5647,17 +5672,11 @@
                   if (data.success) {
                       fetch('/api/session/persist', { method: 'POST' }).catch(function() {});
                       window.location.href = '/';
-                  } else if (errEl) {
-                      errEl.textContent = data.error || 'Failed to open workspace';
-                      errEl.style.display = 'block';
+                  } else {
+                      showErr(data.error || 'Failed to open workspace');
                   }
               })
-              .catch(function(e) {
-                  if (errEl) {
-                      errEl.textContent = 'Network error: ' + e.message;
-                      errEl.style.display = 'block';
-                  }
-              });
+              .catch(function(e) { showErr('Network error: ' + e.message); });
           }
 
           fetch('/api/workspace/recent')
