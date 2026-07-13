@@ -4125,6 +4125,11 @@
             // drag-and-drop reordering
             div.draggable = true;
             div.addEventListener('dragstart', function(e) {
+                // don't let a drag on the close button swallow its click
+                if (e.target && e.target.closest && e.target.closest('.tab-close')) {
+                    e.preventDefault();
+                    return;
+                }
                 draggedPath = tab.path;
                 div.classList.add('dragging');
                 if (e.dataTransfer) {
