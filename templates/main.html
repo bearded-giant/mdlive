@@ -1726,6 +1726,21 @@
           color: var(--link-color);
           border-color: var(--link-color);
       }
+      .browse-filter-input {
+          font-family: var(--code-font);
+          font-size: 12px;
+          color: var(--text-color);
+          background: var(--bg-color);
+          border: 1px solid var(--border-color-light);
+          border-radius: 4px;
+          padding: 3px 8px;
+          flex: 1;
+          min-width: 0;
+          outline: none;
+      }
+      .browse-filter-input:focus {
+          border-color: var(--link-color);
+      }
       .browse-modal-item-time {
           margin-left: auto;
           flex-shrink: 0;
@@ -5965,9 +5980,10 @@
           <input type="text" class="browse-modal-path" id="browsePath" spellcheck="false" autocomplete="off" />
         </div>
         <div class="browse-modal-controls">
+          <input type="text" class="browse-filter-input" id="browseFilter" placeholder="Filter by name (e.g. .giantmem)" spellcheck="false" autocomplete="off" oninput="browseApplyFilter()" />
           <button class="browse-sort-btn active" id="browseSortName" onclick="browseSortBy('name')">Name</button>
           <button class="browse-sort-btn" id="browseSortModified" onclick="browseSortBy('modified')">Modified</button>
-          <label style="margin-left:auto"><input type="checkbox" id="browseShowHidden" onchange="browseToggleHidden()"> Hidden</label>
+          <label><input type="checkbox" id="browseShowHidden" onchange="browseToggleHidden()"> Hidden</label>
         </div>
         <ul class="browse-modal-list" id="browseList"></ul>
         <div class="browse-modal-footer">
@@ -6421,7 +6437,8 @@
       var _browseTreeCache = {};
       var _browseTreeRoot = '';
       var _browseSortMode = localStorage.getItem('mdlive_browse_sort') || 'name';
-      var _browseShowHidden = localStorage.getItem('mdlive_browse_hidden') === 'true';
+      var _browseShowHidden = localStorage.getItem('mdlive_browse_hidden') !== 'false';
+      var _browseFilter = '';
 
       function browseRelativeTime(epoch) {
           if (!epoch) return '';
@@ -6487,6 +6504,22 @@
           browseRefresh();
       }
 
+      function browseApplyFilter() {
+          _browseFilter = (document.getElementById('browseFilter').value || '').trim().toLowerCase();
+          browseRenderTree();
+      }
+
+      // dir stays visible if it matches OR any cached descendant matches
+      function browseEntryVisible(entry) {
+          if (!_browseFilter) return true;
+          if (entry.name.toLowerCase().indexOf(_browseFilter) !== -1) return true;
+          if (entry.is_dir) {
+              var child = _browseTreeCache[entry.path];
+              if (child && child.entries && child.entries.some(browseEntryVisible)) return true;
+          }
+          return false;
+      }
+
       function browseRefresh() {
           if (!_browseCurrentPath) return;
           var expandedDirs = browseGetExpandedDirs();
@@ -6512,6 +6545,23 @@
           if (hiddenCb) hiddenCb.checked = _browseShowHidden;
           document.getElementById('browseSortName').classList.toggle('active', _browseSortMode === 'name');
           document.getElementById('browseSortModified').classList.toggle('active', _browseSortMode === 'modified');
+
+          _browseFilter = '';
+          var filterInput = document.getElementById('browseFilter');
+          if (filterInput) {
+              filterInput.value = '';
+              if (!filterInput._bound) {
+                  filterInput._bound = true;
+                  filterInput.addEventListener('keydown', function(e) {
+                      if (e.key === 'Escape') {
+                          e.stopPropagation();
+                          if (filterInput.value) { filterInput.value = ''; browseApplyFilter(); }
+                          else closeBrowseModal();
+                      }
+                  });
+              }
+              setTimeout(function() { filterInput.focus(); }, 50);
+          }
 
           var pathInput = document.getElementById('browsePath');
           if (!pathInput._bound) {
@@ -6557,6 +6607,9 @@
 
           _browseSelectedFile = null;
           _browseTreeCache = {};
+          _browseFilter = '';
+          var filterInput = document.getElementById('browseFilter');
+          if (filterInput) filterInput.value = '';
           browseUpdateOpenBtn();
 
           listEl.innerHTML = '<li style="padding:16px;text-align:center;opacity:0.5;font-size:13px">Loading...</li>';
@@ -6600,6 +6653,10 @@
               listEl.innerHTML = '<li style="padding:16px;text-align:center;opacity:0.5;font-size:13px">No supported files</li>';
               return;
           }
+          if (_browseFilter && !rootCache.entries.some(browseEntryVisible)) {
+              listEl.innerHTML = '<li style="padding:16px;text-align:center;opacity:0.5;font-size:13px">No matches for "' + escapeHtml(_browseFilter) + '"</li>';
+              return;
+          }
           browseRenderLevel(listEl, _browseTreeRoot, 0);
 
           if (_browseScrollTarget) {
@@ -6614,6 +6671,7 @@
           if (!cached) return;
 
           cached.entries.forEach(function(entry) {
+              if (!browseEntryVisible(entry)) return;
               var li = document.createElement('li');
               li.className = 'browse-modal-item';
               li.style.paddingLeft = (depth * 20 + 16) + 'px';
