@@ -603,7 +603,10 @@ pub fn run() {
                         .last_browse_dir
                         .map(PathBuf::from);
                     let picked = pick_file_or_folder(
-                        &["md", "markdown", "txt", "json"],
+                        &[
+                            "md", "markdown", "txt", "json", "csv", "yaml", "yml", "toml", "mmd",
+                            "graphql", "gql",
+                        ],
                         start.as_deref(),
                     );
                     if let Some(ref path) = picked {

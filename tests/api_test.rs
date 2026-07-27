@@ -539,7 +539,7 @@ async fn test_landing_renders_server_tabs_for_resume() {
 async fn test_api_create_file_csv_yaml_toml() {
     let (server, _temp_dir) = create_directory_server().await;
 
-    for ext in &["csv", "yaml", "yml", "toml", "mmd"] {
+    for ext in &["csv", "yaml", "yml", "toml", "mmd", "graphql", "gql"] {
         let path = format!("new.{ext}");
         let response = server
             .post("/api/create_file")
@@ -562,6 +562,8 @@ async fn test_api_save_round_trip_csv_yaml_toml() {
         ("conf.yaml", "key: value\nlist:\n  - one\n"),
         ("settings.toml", "[section]\nkey = \"v\"\n"),
         ("flow.mmd", "graph TD\n  A --> B\n"),
+        ("schema.graphql", "type Query {\n  ok: Boolean!\n}\n"),
+        ("query.gql", "{ viewer { login } }\n"),
     ];
 
     for (path, content) in &cases {

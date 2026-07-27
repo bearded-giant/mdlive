@@ -1100,6 +1100,25 @@ async fn test_mmd_renders_mermaid_block() {
 }
 
 #[tokio::test]
+async fn test_graphql_renders_with_hljs_class() {
+    let (server, _dir) =
+        dir_server_with(&[("schema.graphql", "type Query {\n  user(id: ID!): User\n}\n")]);
+    let resp = server.get("/schema.graphql").await;
+    assert_eq!(resp.status_code(), 200);
+    let body = resp.text();
+    assert!(body.contains("language-graphql"));
+    assert!(body.contains("type Query {"));
+}
+
+#[tokio::test]
+async fn test_gql_renders_with_hljs_class() {
+    let (server, _dir) = dir_server_with(&[("query.gql", "{ viewer { login } }\n")]);
+    let resp = server.get("/query.gql").await;
+    assert_eq!(resp.status_code(), 200);
+    assert!(resp.text().contains("language-graphql"));
+}
+
+#[tokio::test]
 async fn test_tree_emits_file_icons_per_type() {
     let (server, _dir) = dir_server_with(&[
         ("a.md", "# md"),
@@ -1109,6 +1128,7 @@ async fn test_tree_emits_file_icons_per_type() {
         ("e.yaml", "k: 1"),
         ("f.toml", "k = 1"),
         ("g.mmd", "graph TD\n  A --> B"),
+        ("h.graphql", "type Q { a: Int }"),
     ]);
     let resp = server.get("/a.md").await;
     let body = resp.text();
@@ -1119,4 +1139,5 @@ async fn test_tree_emits_file_icons_per_type() {
     assert!(body.contains("file-icon-yaml"));
     assert!(body.contains("file-icon-toml"));
     assert!(body.contains("file-icon-mermaid"));
+    assert!(body.contains("file-icon-graphql"));
 }

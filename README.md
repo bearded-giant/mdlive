@@ -71,7 +71,7 @@ This is particularly useful for reviewing agent-generated plans, design docs, an
 
 ### Viewing
 
-GFM rendering with tables, task lists, strikethrough, and fenced code blocks. Syntax highlighting via highlight.js. Mermaid diagram rendering. YAML and TOML frontmatter is stripped before rendering. Images referenced in markdown are served inline (png, jpg, gif, svg, webp). Plain text and JSON files are also viewable and editable with syntax highlighting.
+GFM rendering with tables, task lists, strikethrough, and fenced code blocks. Syntax highlighting via highlight.js. Mermaid diagram rendering. YAML and TOML frontmatter is stripped before rendering. Images referenced in markdown are served inline (png, jpg, gif, svg, webp). Plain text, JSON, CSV, YAML, TOML, Mermaid (`.mmd`), and GraphQL (`.graphql`, `.gql`) files are also viewable and editable with syntax highlighting.
 
 ### Themes
 

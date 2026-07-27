@@ -155,7 +155,7 @@ fn validate_new_path(
             Json(ApiResponse {
                 success: false,
                 error: Some(
-                    "only .md, .markdown, .txt, .json, .csv, .yaml, .yml, .toml, .mmd extensions allowed"
+                    "only .md, .markdown, .txt, .json, .csv, .yaml, .yml, .toml, .mmd, .graphql, .gql extensions allowed"
                         .to_string(),
                 ),
                 path: None,
@@ -441,6 +441,7 @@ pub(crate) async fn api_create_file(
             || crate::util::is_yaml_file(&target_full)
             || crate::util::is_toml_file(&target_full)
             || crate::util::is_mermaid_file(&target_full)
+            || crate::util::is_graphql_file(&target_full)
         {
             String::new()
         } else {

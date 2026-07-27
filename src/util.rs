@@ -105,6 +105,13 @@ pub(crate) fn is_mermaid_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn is_graphql_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("graphql") || ext.eq_ignore_ascii_case("gql"))
+        .unwrap_or(false)
+}
+
 pub(crate) fn is_supported_file(path: &Path) -> bool {
     is_markdown_file(path)
         || is_text_file(path)
@@ -113,6 +120,7 @@ pub(crate) fn is_supported_file(path: &Path) -> bool {
         || is_yaml_file(path)
         || is_toml_file(path)
         || is_mermaid_file(path)
+        || is_graphql_file(path)
 }
 
 pub(crate) fn file_type_class(filename: &str) -> &'static str {
@@ -129,6 +137,8 @@ pub(crate) fn file_type_class(filename: &str) -> &'static str {
         "toml"
     } else if is_mermaid_file(path) {
         "mermaid"
+    } else if is_graphql_file(path) {
+        "graphql"
     } else if is_text_file(path) {
         "plaintext"
     } else {
@@ -304,6 +314,17 @@ mod tests {
     }
 
     #[test]
+    fn test_is_graphql_file() {
+        assert!(is_graphql_file(Path::new("schema.graphql")));
+        assert!(is_graphql_file(Path::new("/path/to/query.gql")));
+        assert!(is_graphql_file(Path::new("test.GRAPHQL")));
+        assert!(is_graphql_file(Path::new("test.Gql")));
+        assert!(!is_graphql_file(Path::new("test.gqll")));
+        assert!(!is_graphql_file(Path::new("test.md")));
+        assert!(!is_graphql_file(Path::new("test")));
+    }
+
+    #[test]
     fn test_is_supported_file() {
         assert!(is_supported_file(Path::new("test.md")));
         assert!(is_supported_file(Path::new("test.markdown")));
@@ -314,6 +335,8 @@ mod tests {
         assert!(is_supported_file(Path::new("test.yaml")));
         assert!(is_supported_file(Path::new("test.yml")));
         assert!(is_supported_file(Path::new("test.toml")));
+        assert!(is_supported_file(Path::new("test.graphql")));
+        assert!(is_supported_file(Path::new("test.gql")));
         assert!(!is_supported_file(Path::new("test.rs")));
         assert!(!is_supported_file(Path::new("test.html")));
         assert!(!is_supported_file(Path::new("test")));
@@ -335,6 +358,8 @@ mod tests {
         assert_eq!(file_type_class("test.TOML"), "toml");
         assert_eq!(file_type_class("test.mmd"), "mermaid");
         assert_eq!(file_type_class("test.MMD"), "mermaid");
+        assert_eq!(file_type_class("test.graphql"), "graphql");
+        assert_eq!(file_type_class("test.gql"), "graphql");
         assert_eq!(file_type_class("test.rs"), "unknown");
         assert_eq!(file_type_class("test"), "unknown");
     }
@@ -358,11 +383,14 @@ mod tests {
         fs::write(temp_dir.path().join("test6.yaml"), "a: 1").expect("Failed to write");
         fs::write(temp_dir.path().join("test7.yml"), "b: 2").expect("Failed to write");
         fs::write(temp_dir.path().join("test8.toml"), "k = 1").expect("Failed to write");
+        fs::write(temp_dir.path().join("test9.graphql"), "type Q { a: Int }")
+            .expect("Failed to write");
+        fs::write(temp_dir.path().join("test10.gql"), "{ a }").expect("Failed to write");
         fs::write(temp_dir.path().join("README"), "readme").expect("Failed to write");
         fs::write(temp_dir.path().join("test.rs"), "fn main(){}").expect("Failed to write");
 
         let result = scan_supported_files(temp_dir.path()).expect("Failed to scan");
-        assert_eq!(result.len(), 8);
+        assert_eq!(result.len(), 10);
 
         let filenames: Vec<_> = result
             .iter()
@@ -376,6 +404,8 @@ mod tests {
         assert!(filenames.contains(&"test6.yaml"));
         assert!(filenames.contains(&"test7.yml"));
         assert!(filenames.contains(&"test8.toml"));
+        assert!(filenames.contains(&"test9.graphql"));
+        assert!(filenames.contains(&"test10.gql"));
     }
 
     #[test]

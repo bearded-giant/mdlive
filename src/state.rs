@@ -377,6 +377,8 @@ impl MarkdownState {
             "yaml"
         } else if crate::util::is_toml_file(path) {
             "toml"
+        } else if crate::util::is_graphql_file(path) {
+            "graphql"
         } else {
             "plaintext"
         };
