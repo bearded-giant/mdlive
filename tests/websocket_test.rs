@@ -412,3 +412,74 @@ async fn test_atomic_save_does_not_untrack_file() {
         "served content should reflect the recreated file"
     );
 }
+
+#[tokio::test]
+async fn test_new_directory_triggers_reload() {
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let mut websocket = server.get_websocket("/ws").await.into_websocket().await;
+
+    let new_dir = temp_dir.path().join("notes");
+    fs::create_dir(&new_dir).expect("failed to create directory");
+
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    let update = tokio::time::timeout(
+        Duration::from_secs(WEBSOCKET_TIMEOUT_SECS),
+        websocket.receive_json::<ServerMessage>(),
+    )
+    .await
+    .expect("timeout waiting for reload after directory creation");
+    assert!(matches!(update, ServerMessage::Reload));
+
+    let body = server.get("/test1.md").await.text();
+    assert!(
+        body.contains("notes"),
+        "new directory should appear in the sidebar tree"
+    );
+}
+
+#[tokio::test]
+async fn test_populated_directory_move_tracks_children() {
+    // `mv somedir workspace/` can arrive as a single directory event with no
+    // per-child event, so the new dir has to be scanned on arrival
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let staging = tempfile::tempdir().expect("failed to create staging dir");
+    let src = staging.path().join("moved");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("inner.md"), "# Inner\n\nMoved in").unwrap();
+
+    let dest = temp_dir.path().join("moved");
+    fs::rename(&src, &dest).expect("failed to move directory in");
+
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+
+    let response = server.get("/moved/inner.md").await;
+    assert_eq!(
+        response.status_code(),
+        200,
+        "file inside a moved-in directory should be tracked"
+    );
+    assert!(response.text().contains("Moved in"));
+}
+
+#[tokio::test]
+async fn test_directory_delete_untracks_children() {
+    let (server, temp_dir) = create_directory_server_with_http().await;
+
+    let dir = temp_dir.path().join("doomed");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("child.md"), "# Child").unwrap();
+    tokio::time::sleep(Duration::from_millis(FILE_WATCH_DELAY_MS)).await;
+    assert_eq!(server.get("/doomed/child.md").await.status_code(), 200);
+
+    fs::remove_dir_all(&dir).expect("failed to remove directory");
+    tokio::time::sleep(Duration::from_millis(DEFERRED_REMOVE_WAIT_MS)).await;
+
+    assert_eq!(
+        server.get("/doomed/child.md").await.status_code(),
+        404,
+        "children of a deleted directory should be untracked"
+    );
+}

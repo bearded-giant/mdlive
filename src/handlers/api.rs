@@ -819,6 +819,11 @@ pub struct WorkspaceTabsState {
     pub tabs: Vec<TabEntry>,
     #[serde(default)]
     pub active: Option<String>,
+    // sidebar sort lives server-side, not in localStorage: each window binds its
+    // own port, and a per-origin store is lost when the workspace reopens on a
+    // different one
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -851,46 +856,56 @@ pub(crate) async fn api_get_workspace_tabs(
     Json(read_workspace_tabs(&state.base_dir))
 }
 
+fn write_workspace_tabs(base_dir: &Path, state: &WorkspaceTabsState) -> Result<(), String> {
+    let dir = base_dir.join(".mdlive");
+    fs::create_dir_all(&dir).map_err(|e| format!("failed to create .mdlive: {e}"))?;
+    let payload =
+        serde_json::to_string_pretty(state).map_err(|e| format!("serialize tabs: {e}"))?;
+    fs::write(tabs_path(base_dir), payload).map_err(|e| format!("write tabs: {e}"))
+}
+
+fn write_error(msg: String) -> (StatusCode, Json<ApiResponse>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiResponse {
+            success: false,
+            error: Some(msg),
+            path: None,
+        }),
+    )
+}
+
 pub(crate) async fn api_save_workspace_tabs(
     State(state): State<SharedMarkdownState>,
     Json(body): Json<WorkspaceTabsState>,
 ) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
     let state = state.lock().await;
-    let dir = state.base_dir.join(".mdlive");
-    if let Err(e) = fs::create_dir_all(&dir) {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse {
-                success: false,
-                error: Some(format!("failed to create .mdlive: {e}")),
-                path: None,
-            }),
-        ));
+    let mut body = body;
+    // the tab client doesn't know about sort -- keep whatever is on disk
+    if body.sort.is_none() {
+        body.sort = read_workspace_tabs(&state.base_dir).sort;
     }
-    let path = dir.join("tabs.json");
-    let payload = match serde_json::to_string_pretty(&body) {
-        Ok(s) => s,
-        Err(e) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse {
-                    success: false,
-                    error: Some(format!("serialize tabs: {e}")),
-                    path: None,
-                }),
-            ));
-        }
-    };
-    if let Err(e) = fs::write(&path, payload) {
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse {
-                success: false,
-                error: Some(format!("write tabs: {e}")),
-                path: None,
-            }),
-        ));
-    }
+    write_workspace_tabs(&state.base_dir, &body).map_err(write_error)?;
+    Ok(Json(ApiResponse {
+        success: true,
+        error: None,
+        path: None,
+    }))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SortRequest {
+    mode: String,
+}
+
+pub(crate) async fn api_save_workspace_sort(
+    State(state): State<SharedMarkdownState>,
+    Json(body): Json<SortRequest>,
+) -> Result<Json<ApiResponse>, (StatusCode, Json<ApiResponse>)> {
+    let state = state.lock().await;
+    let mut tabs = read_workspace_tabs(&state.base_dir);
+    tabs.sort = Some(body.mode);
+    write_workspace_tabs(&state.base_dir, &tabs).map_err(write_error)?;
     Ok(Json(ApiResponse {
         success: true,
         error: None,

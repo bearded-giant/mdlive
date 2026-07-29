@@ -583,3 +583,65 @@ async fn test_api_save_round_trip_csv_yaml_toml() {
         assert_eq!(on_disk, *content, "round-trip {path}");
     }
 }
+
+#[tokio::test]
+async fn test_save_workspace_sort_persists() {
+    let (server, temp_dir) = create_directory_server().await;
+
+    server
+        .post("/api/workspace/sort")
+        .json(&serde_json::json!({ "mode": "modified-desc" }))
+        .await
+        .assert_status_ok();
+
+    let json: serde_json::Value = server.get("/api/workspace/tabs").await.json();
+    assert_eq!(json["sort"], "modified-desc");
+
+    let written = fs::read_to_string(temp_dir.path().join(".mdlive").join("tabs.json")).unwrap();
+    assert!(written.contains("modified-desc"));
+}
+
+#[tokio::test]
+async fn test_saving_tabs_preserves_sort() {
+    // the tab client posts full tab state and knows nothing about sort -- it must
+    // not wipe the stored sort mode
+    let (server, _dir) = create_directory_server().await;
+
+    server
+        .post("/api/workspace/sort")
+        .json(&serde_json::json!({ "mode": "modified-desc" }))
+        .await
+        .assert_status_ok();
+
+    server
+        .post("/api/workspace/tabs")
+        .json(&serde_json::json!({
+            "tabs": [{ "path": "test1.md", "mode": "view" }],
+            "active": "test1.md"
+        }))
+        .await
+        .assert_status_ok();
+
+    let json: serde_json::Value = server.get("/api/workspace/tabs").await.json();
+    assert_eq!(json["sort"], "modified-desc");
+    assert_eq!(json["active"], "test1.md");
+}
+
+#[tokio::test]
+async fn test_sort_mode_reaches_rendered_page() {
+    let (server, _dir) = create_directory_server().await;
+
+    server
+        .post("/api/workspace/sort")
+        .json(&serde_json::json!({ "mode": "modified-desc" }))
+        .await
+        .assert_status_ok();
+
+    // the sort <option> markup also contains "modified-desc", so match the
+    // injected server state instead
+    let body = server.get("/test1.md").await.text().replace(' ', "");
+    assert!(
+        body.contains("\"sort\":\"modified-desc\""),
+        "saved sort mode should be injected into the page"
+    );
+}

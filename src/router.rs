@@ -41,6 +41,27 @@ pub fn new_router_with_config(
 ) -> Result<Router> {
     let base_dir = base_dir.canonicalize()?;
 
+    // opening a path in a fresh window builds its router directly instead of
+    // calling switch_workspace, so record the recent here or it never lands
+    let mut config = config.reload();
+    config.add_recent(
+        if is_directory_mode {
+            base_dir.display().to_string()
+        } else {
+            tracked_files
+                .first()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| base_dir.display().to_string())
+        },
+        if is_directory_mode {
+            "directory"
+        } else {
+            "file"
+        }
+        .to_string(),
+    );
+    let _ = config.save();
+
     let mut md_state = MarkdownState::new(base_dir.clone(), tracked_files, is_directory_mode)?;
     md_state.daemon_mode = true;
     md_state.config = Some(config);
@@ -132,6 +153,10 @@ fn build_routes(state: Arc<Mutex<MarkdownState>>) -> Router {
         .route(
             "/api/workspace/tabs",
             get(handlers::api::api_get_workspace_tabs).post(handlers::api::api_save_workspace_tabs),
+        )
+        .route(
+            "/api/workspace/sort",
+            post(handlers::api::api_save_workspace_sort),
         )
         .route("/open", get(handlers::workspace::open_and_redirect))
         .route("/edit/*filepath", get(handlers::pages::serve_editor))

@@ -208,9 +208,11 @@ pub(crate) async fn api_workspace_recent(
     State(state): State<SharedMarkdownState>,
 ) -> Json<RecentResponse> {
     let guard = state.lock().await;
+    // reload off disk: other windows (each its own server) append recents too
     let recent = guard
         .config
         .as_ref()
+        .map(|c| c.reload())
         .map(|c| {
             c.recent
                 .iter()

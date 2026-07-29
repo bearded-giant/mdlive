@@ -190,9 +190,11 @@ impl MarkdownState {
         } else {
             original_path.unwrap_or_else(|| self.base_dir.display().to_string())
         };
-        if let Some(ref mut config) = self.config {
+        if let Some(config) = self.config.as_ref().map(|c| c.reload()) {
+            let mut config = config;
             config.add_recent(recent_path, mode.to_string());
             let _ = config.save();
+            self.config = Some(config);
         }
 
         let rx_count = self.change_tx.receiver_count();

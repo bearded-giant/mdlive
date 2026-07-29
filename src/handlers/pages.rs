@@ -438,6 +438,9 @@ fn render_not_found(state: &MarkdownState, path: &str) -> (StatusCode, Html<Stri
             base_dir => state.base_dir.display().to_string(),
             daemon_mode => state.daemon_mode,
             unavailable_path => path,
+            saved_tabs => serde_json::to_value(
+                crate::handlers::api::read_workspace_tabs(&state.base_dir)
+            ).unwrap_or(serde_json::Value::Null),
         })
     } else {
         template.render(context! {

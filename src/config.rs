@@ -50,6 +50,13 @@ impl AppConfig {
         config
     }
 
+    /// Re-read from the same file this config was loaded from. Every window runs
+    /// its own server with its own in-memory copy, so a cached config goes stale
+    /// as soon as another window records a recent.
+    pub fn reload(&self) -> Self {
+        Self::load_from(self.file_path.clone())
+    }
+
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.file_path.parent() {
             fs::create_dir_all(parent)?;

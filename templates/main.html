@@ -2943,23 +2943,34 @@
       }
 
       // sidebar sort -- reorders tree items at each directory level
+      var _sortMode = "name-asc";
+
       function initSidebarSort() {
         var select = document.getElementById("sidebarSort");
         if (!select) return;
 
         var sortKey = baseDir ? 'mdlive-sort:' + baseDir : 'sidebar-sort';
-        var saved = localStorage.getItem(sortKey) || "name-asc";
+        // server copy is authoritative: localStorage is per-origin and each
+        // window binds a different port, so it doesn't survive a reopen
+        var saved = (__serverTabs && __serverTabs.sort) ||
+          localStorage.getItem(sortKey) || "name-asc";
         select.value = saved;
         applySortMode(saved);
 
         select.addEventListener("change", function () {
           var mode = this.value;
           localStorage.setItem(sortKey, mode);
+          fetch('/api/workspace/sort', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: mode })
+          }).catch(function () {});
           applySortMode(mode);
         });
       }
 
       function applySortMode(mode) {
+        _sortMode = mode;
         var tree = document.querySelector(".file-tree");
         if (!tree) return;
 
@@ -5106,8 +5117,7 @@
                   var sidebarLink = document.querySelector('.file-tree a[href="/' + path + '"]');
                   if (sidebarLink) {
                       sidebarLink.setAttribute('data-modified', nowEpoch);
-                      var sortMode = localStorage.getItem(baseDir ? 'mdlive-sort:' + baseDir : 'sidebar-sort') || 'name-asc';
-                      applySortMode(sortMode);
+                      applySortMode(_sortMode);
                   }
 
                   // update header timestamp
