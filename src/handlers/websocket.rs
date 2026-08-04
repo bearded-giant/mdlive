@@ -6,14 +6,31 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::broadcast::error::RecvError;
 
-use crate::state::SharedMarkdownState;
+use crate::state::{ServerMessage, SharedMarkdownState};
 
 pub(crate) async fn websocket_handler(
     ws: WebSocketUpgrade,
     State(state): State<SharedMarkdownState>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_websocket(socket, state))
+}
+
+enum WsAction {
+    Forward(ServerMessage),
+    Stop,
+}
+
+/// A client that stalls (laptop asleep, slow socket) falls behind the broadcast
+/// channel and gets `Lagged`. Dropping the socket there left the page frozen on
+/// whatever it had rendered, so collapse the missed burst into one reload.
+fn next_action(recv: Result<ServerMessage, RecvError>) -> WsAction {
+    match recv {
+        Ok(msg) => WsAction::Forward(msg),
+        Err(RecvError::Lagged(_)) => WsAction::Forward(ServerMessage::Reload),
+        Err(RecvError::Closed) => WsAction::Stop,
+    }
 }
 
 async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
@@ -54,8 +71,8 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
     });
 
     let send_task = tokio::spawn(async move {
-        while let Ok(reload_msg) = change_rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&reload_msg) {
+        while let WsAction::Forward(msg) = next_action(change_rx.recv().await) {
+            if let Ok(json) = serde_json::to_string(&msg) {
                 if sender.send(Message::Text(json)).await.is_err() {
                     break;
                 }
@@ -66,5 +83,38 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
     tokio::select! {
         _ = recv_task => {},
         _ = send_task => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lagged_client_gets_a_reload_not_a_dropped_socket() {
+        assert!(matches!(
+            next_action(Err(RecvError::Lagged(42))),
+            WsAction::Forward(ServerMessage::Reload)
+        ));
+    }
+
+    #[test]
+    fn closed_channel_stops_the_send_loop() {
+        assert!(matches!(
+            next_action(Err(RecvError::Closed)),
+            WsAction::Stop
+        ));
+    }
+
+    #[test]
+    fn normal_message_is_forwarded_unchanged() {
+        let msg = ServerMessage::FileMoved {
+            from: "a.md".into(),
+            to: "b.md".into(),
+        };
+        assert!(matches!(
+            next_action(Ok(msg)),
+            WsAction::Forward(ServerMessage::FileMoved { .. })
+        ));
     }
 }

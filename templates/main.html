@@ -3603,6 +3603,7 @@
 
       // WebSocket reconnect with exponential backoff
       var _wsReconnectDelay = 3000;
+      var _wsWasConnected = false;
 
       // Auto-refresh functionality using WebSocket
       function setupLiveReload() {
@@ -3613,6 +3614,13 @@
         socket.onopen = function (event) {
           console.log("WebSocket connected");
           _wsReconnectDelay = 3000;
+          // changes made while the socket was down were never delivered, so the
+          // DOM is stale -- reload once instead of waiting for the next event
+          if (_wsWasConnected) {
+            window.location.reload();
+            return;
+          }
+          _wsWasConnected = true;
         };
 
         socket.onmessage = function (event) {
@@ -5240,11 +5248,22 @@
 
           // websocket: suppress reload in editor mode
           var _suppressReloadUntil = 0;
+          var _editorWasConnected = false;
           window._editorSetupLiveReload = function() {
               var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
               var wsUrl = protocol + '//' + window.location.host + '/ws';
               var socket = new WebSocket(wsUrl);
               var notify = document.getElementById('editorNotify');
+
+              socket.onopen = function() {
+                  // reconnect means missed changes, but reloading would discard the
+                  // buffer -- flag it and let the user decide
+                  if (_editorWasConnected && notify) {
+                      notify.classList.add('show');
+                      setTimeout(function() { notify.classList.remove('show'); }, 3000);
+                  }
+                  _editorWasConnected = true;
+              };
 
               socket.onmessage = function(event) {
                   try {
