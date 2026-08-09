@@ -1,4 +1,4 @@
-.PHONY: build install install-cli install-dev test check fmt lint clean changelog tauri dev reset-app reset-app-hard
+.PHONY: build install install-cli install-dev service-reinstall test check fmt lint clean changelog tauri dev reset-app reset-app-hard
 
 BUNDLE_ID := com.beardedgiant.mdlive
 APP_PATH := /Applications/mdlive.app
@@ -44,6 +44,14 @@ install: reset-app tauri
 
 install-cli:
 	cargo install --path .
+
+# uninstall first: `service install` bakes current_exe() into the plist,
+# so the CLI must be reinstalled to ~/.cargo/bin before install re-reads it.
+service-reinstall:
+	-mdlive service uninstall
+	$(MAKE) install-cli
+	mdlive service install
+	mdlive service status
 
 test:
 	cargo test -p mdlive

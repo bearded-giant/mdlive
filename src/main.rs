@@ -404,6 +404,21 @@ fn app_exists() -> bool {
             .unwrap_or(false)
 }
 
+fn launchd_pid(list_output: &str) -> Option<u32> {
+    list_output
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("\"PID\" = "))
+        .and_then(|v| v.trim().trim_end_matches(';').trim().parse().ok())
+}
+
+fn launchd_loaded() -> bool {
+    std::process::Command::new("launchctl")
+        .args(["list", LAUNCHD_LABEL])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 fn handle_service(action: ServiceAction, hostname: &str, port: u16) -> Result<()> {
     let plist_dir = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?
@@ -432,6 +447,8 @@ fn handle_service(action: ServiceAction, hostname: &str, port: u16) -> Result<()
         <string>--no-open</string>
     </array>
     <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
     <string>/tmp/mdlive.log</string>
@@ -463,9 +480,20 @@ fn handle_service(action: ServiceAction, hostname: &str, port: u16) -> Result<()
             if !plist_path.exists() {
                 anyhow::bail!("LaunchAgent not installed. Run `mdlive service install` first.");
             }
-            let status = std::process::Command::new("launchctl")
-                .args(["start", LAUNCHD_LABEL])
-                .status()?;
+            let uid = get_uid();
+            // stop boots the job out, so start has to bootstrap it back in
+            let status = if launchd_loaded() {
+                std::process::Command::new("launchctl")
+                    .arg("kickstart")
+                    .arg(format!("gui/{uid}/{LAUNCHD_LABEL}"))
+                    .status()?
+            } else {
+                std::process::Command::new("launchctl")
+                    .arg("bootstrap")
+                    .arg(format!("gui/{uid}"))
+                    .arg(&plist_path)
+                    .status()?
+            };
             if status.success() {
                 println!("Started {LAUNCHD_LABEL}");
             } else {
@@ -473,8 +501,11 @@ fn handle_service(action: ServiceAction, hostname: &str, port: u16) -> Result<()
             }
         }
         ServiceAction::Stop => {
+            // bootout, not stop: KeepAlive would relaunch it immediately
+            let uid = get_uid();
             let status = std::process::Command::new("launchctl")
-                .args(["stop", LAUNCHD_LABEL])
+                .arg("bootout")
+                .arg(format!("gui/{uid}/{LAUNCHD_LABEL}"))
                 .status()?;
             if status.success() {
                 println!("Stopped {LAUNCHD_LABEL}");
@@ -501,17 +532,14 @@ fn handle_service(action: ServiceAction, hostname: &str, port: u16) -> Result<()
             let output = std::process::Command::new("launchctl")
                 .args(["list", LAUNCHD_LABEL])
                 .output()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
 
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                println!("{LAUNCHD_LABEL}: running");
-                for line in stdout.lines() {
-                    if line.contains("PID") || line.contains("pid") {
-                        println!("  {}", line.trim());
-                    }
-                }
+            if !output.status.success() {
+                println!("{LAUNCHD_LABEL}: not loaded");
+            } else if let Some(pid) = launchd_pid(&stdout) {
+                println!("{LAUNCHD_LABEL}: running (pid {pid})");
             } else {
-                println!("{LAUNCHD_LABEL}: not running");
+                println!("{LAUNCHD_LABEL}: loaded but not running");
             }
 
             if plist_path.exists() {
@@ -523,4 +551,23 @@ fn handle_service(action: ServiceAction, hostname: &str, port: u16) -> Result<()
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::launchd_pid;
+
+    #[test]
+    fn parses_pid_when_running() {
+        let out = "{\n\t\"LimitLoadToSessionType\" = \"Aqua\";\n\t\"Label\" = \"com.beardedgiant.mdlive\";\n\t\"LastExitStatus\" = 0;\n\t\"PID\" = 4213;\n};\n";
+        assert_eq!(launchd_pid(out), Some(4213));
+    }
+
+    #[test]
+    fn no_pid_when_loaded_but_dead() {
+        // launchctl omits the PID key entirely when the job is not running
+        let out = "{\n\t\"Label\" = \"com.beardedgiant.mdlive\";\n\t\"LastExitStatus\" = 9;\n};\n";
+        assert_eq!(launchd_pid(out), None);
+        assert_eq!(launchd_pid(""), None);
+    }
 }
