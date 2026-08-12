@@ -3641,6 +3641,9 @@
               }
             } else if (message.type === "WorkspaceChanged") {
               console.log("Workspace changed to: " + message.base_dir);
+              // ?picker forces the selector; navigating here would clobber it
+              // with the daemon's current workspace before the user can pick
+              if (window.location.search.indexOf("picker") !== -1) return;
               // skip navigation if we're already showing this workspace
               if (message.base_dir && message.base_dir === baseDir && !message.file) return;
               window.location.href = message.file ? '/' + message.file : '/';
