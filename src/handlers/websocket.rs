@@ -60,7 +60,7 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
         eprintln!("[ws] client connected, no workspace loaded");
     }
 
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         while let Some(msg) = receiver.next().await {
             match msg {
                 Ok(Message::Text(_)) => {}
@@ -70,7 +70,7 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
         }
     });
 
-    let send_task = tokio::spawn(async move {
+    let mut send_task = tokio::spawn(async move {
         while let WsAction::Forward(msg) = next_action(change_rx.recv().await) {
             if let Ok(json) = serde_json::to_string(&msg) {
                 if sender.send(Message::Text(json)).await.is_err() {
@@ -80,9 +80,11 @@ async fn handle_websocket(socket: WebSocket, state: SharedMarkdownState) {
         }
     });
 
+    // whichever half finishes first, abort the other -- dropping its handle only
+    // detaches it, leaving the socket and its broadcast subscription alive
     tokio::select! {
-        _ = recv_task => {},
-        _ = send_task => {},
+        _ = &mut recv_task => send_task.abort(),
+        _ = &mut send_task => recv_task.abort(),
     }
 }
 
