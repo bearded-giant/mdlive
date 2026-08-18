@@ -77,7 +77,11 @@ pub async fn serve_daemon(hostname: impl AsRef<str>, port: u16, open: bool) -> R
 
     let listen_addr = format_host(hostname, actual_port);
 
-    write_daemon_port(actual_port);
+    // the desktop app owns the port file while it runs -- clobbering it would
+    // route `mdlive <file>` here, where there is no window to open
+    if !app_daemon_alive() {
+        write_daemon_port(actual_port);
+    }
 
     println!("  mdlive daemon started");
     println!("  Server running at: http://{listen_addr}");
@@ -90,7 +94,9 @@ pub async fn serve_daemon(hostname: impl AsRef<str>, port: u16, open: bool) -> R
 
     axum::serve(listener, router).await?;
 
-    delete_daemon_port();
+    if read_daemon_port() == Some(actual_port) {
+        delete_daemon_port();
+    }
 
     Ok(())
 }
@@ -187,6 +193,37 @@ pub fn write_daemon_port(port: u16) {
 pub fn read_daemon_port() -> Option<u16> {
     let port_file = get_daemon_port_file()?;
     std::fs::read_to_string(port_file).ok()?.trim().parse().ok()
+}
+
+/// True when the port file names a live desktop app (it routes /api/window/new).
+pub fn app_daemon_alive() -> bool {
+    use std::io::{Read as _, Write as _};
+    let Some(port) = read_daemon_port() else {
+        return false;
+    };
+    let body = "{\"path\":\"\"}";
+    let request = format!(
+        "POST /api/window/new HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let Ok(addr) = format!("127.0.0.1:{port}").parse() else {
+        return false;
+    };
+    let Ok(mut stream) =
+        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(300))
+    else {
+        return false;
+    };
+    let to = std::time::Duration::from_millis(300);
+    let _ = stream.set_read_timeout(Some(to));
+    let _ = stream.set_write_timeout(Some(to));
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let _ = stream.flush();
+    let mut buf = vec![0u8; 512];
+    let _ = stream.read(&mut buf);
+    String::from_utf8_lossy(&buf).contains("path required")
 }
 
 pub fn delete_daemon_port() {

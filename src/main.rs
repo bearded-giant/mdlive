@@ -3,7 +3,8 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use mdlive::{
-    delete_daemon_port, read_daemon_port, scan_supported_files, serve_daemon, serve_markdown,
+    app_daemon_alive, delete_daemon_port, read_daemon_port, scan_supported_files, serve_daemon,
+    serve_markdown,
 };
 
 #[derive(Parser)]
@@ -512,7 +513,10 @@ fn handle_service(action: ServiceAction, hostname: &str, port: u16) -> Result<()
             } else {
                 println!("{LAUNCHD_LABEL}: not running or not installed");
             }
-            delete_daemon_port();
+            // the app may own the port file; deleting it would strand `mdlive <file>`
+            if !app_daemon_alive() {
+                delete_daemon_port();
+            }
         }
         ServiceAction::Uninstall => {
             if plist_path.exists() {

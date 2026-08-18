@@ -146,10 +146,15 @@ fn query_daemon_workspace(port: u16) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-fn check_mdlive_server(port: u16) -> bool {
+// a CLI daemon answers /api/workspace/current too, but only the app routes
+// /api/window/new -- reusing a CLI daemon costs every native window, so the
+// picker's Open would silently fall back to switching the shared state in place
+fn check_app_server(port: u16) -> bool {
     use std::io::{Read as _, Write as _};
+    let body = "{\"path\":\"\"}";
     let request = format!(
-        "GET /api/workspace/current HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        "POST /api/window/new HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
     );
     let Ok(mut stream) = std::net::TcpStream::connect_timeout(
         &format!("127.0.0.1:{port}").parse().unwrap(),
@@ -164,18 +169,19 @@ fn check_mdlive_server(port: u16) -> bool {
     let _ = stream.flush();
     let mut buf = vec![0u8; 512];
     let _ = stream.read(&mut buf);
-    String::from_utf8_lossy(&buf).contains("\"success\"")
+    String::from_utf8_lossy(&buf).contains("path required")
 }
 
 fn find_existing_server() -> Option<u16> {
-    if check_mdlive_server(mdlive::DEFAULT_PORT) {
+    if check_app_server(mdlive::DEFAULT_PORT) {
         return Some(mdlive::DEFAULT_PORT);
     }
     if let Some(port) = mdlive::read_daemon_port() {
-        if port != mdlive::DEFAULT_PORT && check_mdlive_server(port) {
+        if port != mdlive::DEFAULT_PORT && check_app_server(port) {
             return Some(port);
         }
-        // stale port file — previous instance crashed without cleanup
+        // port file points at a dead instance or a CLI daemon; either way this
+        // app binds its own port and reclaims the file in start_server
         mdlive::delete_daemon_port();
     }
     None
