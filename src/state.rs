@@ -15,6 +15,10 @@ use crate::util::is_markdown_file;
 
 pub(crate) type SharedMarkdownState = Arc<Mutex<MarkdownState>>;
 
+// markdown-rs parse time blows up superlinearly, and rendering runs while the
+// state mutex is held -- one generated multi-MB file would wedge every request
+const MAX_RENDER_BYTES: usize = 1024 * 1024;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
 pub enum ServerMessage {
@@ -340,6 +344,9 @@ impl MarkdownState {
     }
 
     pub(crate) fn render_file_to_html(path: &Path, content: &str) -> Result<String> {
+        if content.len() > MAX_RENDER_BYTES {
+            return Ok(Self::too_large_html(path, content.len()));
+        }
         if is_markdown_file(path) {
             Self::markdown_to_html(content)
         } else if crate::util::is_csv_file(path) {
@@ -352,6 +359,19 @@ impl MarkdownState {
         } else {
             Ok(Self::text_to_html(path, content))
         }
+    }
+
+    fn too_large_html(path: &Path, bytes: usize) -> String {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        format!(
+            "<p><em>{} is {:.1} MB -- too large to preview (limit {} MB). Use the editor or open it outside mdlive.</em></p>",
+            escape_html(&name),
+            bytes as f64 / (1024.0 * 1024.0),
+            MAX_RENDER_BYTES / (1024 * 1024)
+        )
     }
 
     pub(crate) fn markdown_to_html(content: &str) -> Result<String> {
@@ -443,4 +463,26 @@ fn escape_html(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_file_gets_a_stub_instead_of_a_parse() {
+        let content = "# heading\n\n[link][ref] *em* `code`\n".repeat(200_000);
+        assert!(content.len() > MAX_RENDER_BYTES);
+        let start = SystemTime::now();
+        let html = MarkdownState::render_file_to_html(Path::new("/tmp/huge.md"), &content).unwrap();
+        assert!(html.contains("too large to preview"));
+        assert!(html.contains("huge.md"));
+        assert!(start.elapsed().unwrap().as_secs() < 5);
+    }
+
+    #[test]
+    fn normal_file_still_renders() {
+        let html = MarkdownState::render_file_to_html(Path::new("/tmp/a.md"), "# hi").unwrap();
+        assert!(html.contains("<h1>hi</h1>"));
+    }
 }
