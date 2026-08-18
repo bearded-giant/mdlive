@@ -125,28 +125,35 @@ pub(crate) async fn api_workspace_switch(
     let mode = if dir_mode { "directory" } else { "file" };
     let base_dir_display = base_dir.display().to_string();
 
+    let render_dir = base_dir.clone();
+    let render_failed = |e: String| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(WorkspaceResponse {
+                success: false,
+                error: Some(format!("failed to switch workspace: {e}")),
+                base_dir: None,
+                mode: None,
+                file_count: None,
+            }),
+        )
+    };
+    let tracked = tokio::task::spawn_blocking(move || {
+        crate::state::MarkdownState::render_tracked_files(&render_dir, files)
+    })
+    .await
+    .map_err(|e| render_failed(e.to_string()))?
+    .map_err(|e| render_failed(e.to_string()))?;
+
     {
         let mut guard = state.lock().await;
-        guard
-            .switch_workspace(
-                base_dir.clone(),
-                files,
-                dir_mode,
-                target_file,
-                Some(original_path),
-            )
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(WorkspaceResponse {
-                        success: false,
-                        error: Some(format!("failed to switch workspace: {e}")),
-                        base_dir: None,
-                        mode: None,
-                        file_count: None,
-                    }),
-                )
-            })?;
+        guard.switch_workspace(
+            base_dir.clone(),
+            tracked,
+            dir_mode,
+            target_file,
+            Some(original_path),
+        );
     }
 
     let abort_handle: AbortHandle = start_watcher(&base_dir, state.clone()).map_err(|e| {
@@ -405,19 +412,25 @@ pub(crate) async fn open_and_redirect(
     };
 
     if let Some((base_dir, files, dir_mode, target_file)) = result {
-        let switch_ok = {
-            let mut guard = state.lock().await;
-            guard
-                .switch_workspace(
+        let render_dir = base_dir.clone();
+        let tracked = tokio::task::spawn_blocking(move || {
+            crate::state::MarkdownState::render_tracked_files(&render_dir, files)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok());
+
+        if let Some(tracked) = tracked {
+            {
+                let mut guard = state.lock().await;
+                guard.switch_workspace(
                     base_dir.clone(),
-                    files,
+                    tracked,
                     dir_mode,
                     target_file,
                     Some(original_path),
-                )
-                .is_ok()
-        };
-        if switch_ok {
+                );
+            }
             if let Ok(abort_handle) = start_watcher(&base_dir, state.clone()) {
                 let mut guard = state.lock().await;
                 guard.watcher_abort = Some(abort_handle);

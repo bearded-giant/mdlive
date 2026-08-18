@@ -67,31 +67,7 @@ impl MarkdownState {
     ) -> Result<Self> {
         let (change_tx, _) = broadcast::channel::<ServerMessage>(16);
 
-        let mut tracked_files = HashMap::new();
-        for file_path in file_paths {
-            let metadata = fs::metadata(&file_path)?;
-            let last_modified = metadata.modified()?;
-            let created = metadata.created().unwrap_or(last_modified);
-            let content = fs::read_to_string(&file_path)?;
-            let html = Self::render_file_to_html(&file_path, &content)?;
-
-            let canonical = file_path.canonicalize().unwrap_or(file_path);
-            let key = canonical
-                .strip_prefix(&base_dir)
-                .unwrap_or(&canonical)
-                .to_string_lossy()
-                .to_string();
-
-            tracked_files.insert(
-                key,
-                TrackedFile {
-                    path: canonical,
-                    last_modified,
-                    created,
-                    html,
-                },
-            );
-        }
+        let tracked_files = Self::render_tracked_files(&base_dir, file_paths)?;
 
         let dir = base_dir.join(".mdlive");
         let history = dir.join("history");
@@ -142,22 +118,13 @@ impl MarkdownState {
         !self.base_dir.as_os_str().is_empty()
     }
 
-    pub(crate) fn switch_workspace(
-        &mut self,
-        new_dir: PathBuf,
+    /// Read + render every file into its own map. Callers run this off the
+    /// state mutex (rendering a large tree would otherwise block every route).
+    pub(crate) fn render_tracked_files(
+        base_dir: &Path,
         files: Vec<PathBuf>,
-        dir_mode: bool,
-        target_file: Option<String>,
-        original_path: Option<String>,
-    ) -> Result<()> {
-        if let Some(handle) = self.watcher_abort.take() {
-            handle.abort();
-        }
-
-        self.base_dir = new_dir;
-        self.is_directory_mode = dir_mode;
-        self.tracked_files.clear();
-
+    ) -> Result<HashMap<String, TrackedFile>> {
+        let mut tracked_files = HashMap::new();
         for file_path in files {
             let metadata = fs::metadata(&file_path)?;
             let last_modified = metadata.modified()?;
@@ -167,12 +134,12 @@ impl MarkdownState {
 
             let canonical = file_path.canonicalize().unwrap_or(file_path);
             let key = canonical
-                .strip_prefix(&self.base_dir)
+                .strip_prefix(base_dir)
                 .unwrap_or(&canonical)
                 .to_string_lossy()
                 .to_string();
 
-            self.tracked_files.insert(
+            tracked_files.insert(
                 key,
                 TrackedFile {
                     path: canonical,
@@ -182,6 +149,24 @@ impl MarkdownState {
                 },
             );
         }
+        Ok(tracked_files)
+    }
+
+    pub(crate) fn switch_workspace(
+        &mut self,
+        new_dir: PathBuf,
+        tracked_files: HashMap<String, TrackedFile>,
+        dir_mode: bool,
+        target_file: Option<String>,
+        original_path: Option<String>,
+    ) {
+        if let Some(handle) = self.watcher_abort.take() {
+            handle.abort();
+        }
+
+        self.base_dir = new_dir;
+        self.is_directory_mode = dir_mode;
+        self.tracked_files = tracked_files;
 
         let dir = self.base_dir.join(".mdlive");
         let history = dir.join("history");
@@ -210,8 +195,6 @@ impl MarkdownState {
             base_dir: self.base_dir.display().to_string(),
             file: target_file,
         });
-
-        Ok(())
     }
 
     pub(crate) fn show_navigation(&self) -> bool {
