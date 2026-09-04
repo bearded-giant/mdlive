@@ -9,7 +9,6 @@ description = "mdlive desktop app"
 [dependencies]
 mdlive = { path = ".." }
 tauri = { version = "2", features = ["devtools"] }
-tauri-plugin-window-state = "2"
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "net"] }
 axum = "0.7.9"
 dirs = "6"

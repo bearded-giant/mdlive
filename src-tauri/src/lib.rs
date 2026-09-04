@@ -233,6 +233,33 @@ fn start_server_for_path(path: &std::path::Path) -> Result<u16, String> {
     })
 }
 
+// tauri clamps to and centers on the monitor owning the builder position, so
+// seed it with the cursor to open on the screen in use instead of the primary
+fn new_window<'a, M: Manager<tauri::Wry>>(
+    manager: &'a M,
+    label: &str,
+    url: &str,
+    title: &str,
+) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, M> {
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        manager,
+        label,
+        tauri::WebviewUrl::External(url.parse().unwrap()),
+    )
+    .title(title)
+    .inner_size(1500.0, 1000.0)
+    .min_inner_size(600.0, 400.0)
+    .center()
+    .prevent_overflow_with_margin(tauri::LogicalSize::new(40.0, 80.0));
+    let app = manager.app_handle();
+    if let (Ok(cursor), Ok(Some(primary))) = (app.cursor_position(), app.primary_monitor()) {
+        // tao reports the cursor in primary-monitor physical px; position() wants logical
+        let scale = primary.scale_factor();
+        builder = builder.position(cursor.x / scale, cursor.y / scale);
+    }
+    builder
+}
+
 fn create_window(app_handle: &tauri::AppHandle, port: u16, path: &std::path::Path) {
     let url = format!("http://127.0.0.1:{port}");
     let label = format!("win-{port}");
@@ -242,17 +269,7 @@ fn create_window(app_handle: &tauri::AppHandle, port: u16, path: &std::path::Pat
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.display().to_string())
     );
-    if tauri::WebviewWindowBuilder::new(
-        app_handle,
-        &label,
-        tauri::WebviewUrl::External(url.parse().unwrap()),
-    )
-    .title(&title)
-    .inner_size(1500.0, 1000.0)
-    .min_inner_size(600.0, 400.0)
-    .build()
-    .is_ok()
-    {
+    if new_window(app_handle, &label, &url, &title).build().is_ok() {
         register_window_path(&label, path);
     }
 }
@@ -266,15 +283,7 @@ fn create_picker_window(app_handle: &tauri::AppHandle, port: u16) {
         .unwrap_or_default()
         .as_millis();
     let label = format!("picker-{stamp}");
-    let _ = tauri::WebviewWindowBuilder::new(
-        app_handle,
-        &label,
-        tauri::WebviewUrl::External(url.parse().unwrap()),
-    )
-    .title("mdlive")
-    .inner_size(1500.0, 1000.0)
-    .min_inner_size(600.0, 400.0)
-    .build();
+    let _ = new_window(app_handle, &label, &url, "mdlive").build();
 }
 
 // start server on a background thread, then create window on main thread
@@ -574,21 +583,12 @@ pub fn run() {
     }
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_window_state::Builder::new().build())
         .invoke_handler(tauri::generate_handler![get_server_url])
         .setup(move |app| {
             if restore_paths.is_empty() {
                 // no previous session — show daemon picker
                 let url = format!("http://127.0.0.1:{port}");
-                let _ = tauri::WebviewWindowBuilder::new(
-                    app,
-                    "main",
-                    tauri::WebviewUrl::External(url.parse().unwrap()),
-                )
-                .title("mdlive")
-                .inner_size(1500.0, 1000.0)
-                .min_inner_size(600.0, 400.0)
-                .build()?;
+                let _ = new_window(app, "main", &url, "mdlive").build()?;
             } else {
                 // restore previous workspace windows
                 for path in &restore_paths {
@@ -711,18 +711,14 @@ pub fn run() {
                 if !has_visible_windows {
                     let port = SERVER_PORT.get().copied().unwrap_or(mdlive::DEFAULT_PORT);
                     let url = format!("http://127.0.0.1:{port}");
-                    let _ = tauri::WebviewWindowBuilder::new(
-                        app_handle,
-                        format!("main-{}", std::time::SystemTime::now()
+                    let label = format!(
+                        "main-{}",
+                        std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
-                            .as_millis()),
-                        tauri::WebviewUrl::External(url.parse().unwrap()),
-                    )
-                    .title("mdlive")
-                    .inner_size(1500.0, 1000.0)
-                    .min_inner_size(600.0, 400.0)
-                    .build();
+                            .as_millis()
+                    );
+                    let _ = new_window(app_handle, &label, &url, "mdlive").build();
                 }
             }
             tauri::RunEvent::Opened { urls } => {
